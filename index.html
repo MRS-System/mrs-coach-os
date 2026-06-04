@@ -209,11 +209,28 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
 /* SECTION DIVIDER */
 .section-div{font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);margin-bottom:.6rem;padding-bottom:5px;border-bottom:1px solid var(--border)}
 
+/* ── HAMBURGER BUTTON (mobile only) ── */
+.hamburger{display:none;position:fixed;top:12px;left:12px;z-index:300;background:var(--black-3);border:1px solid var(--border-2);border-radius:10px;width:40px;height:40px;align-items:center;justify-content:center;cursor:pointer;flex-direction:column;gap:5px;padding:10px}
+.hamburger span{display:block;width:20px;height:2px;background:var(--gold);border-radius:2px;transition:all .2s}
+
+/* ── MOBILE OVERLAY ── */
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:149}
+.sidebar-overlay.active{display:block}
+
 @media(max-width:700px){
-  .sidebar{width:60px}.sidebar-brand,.nav-item span,.key-status span,.nav-label{display:none}
-  .nav-item{justify-content:center;padding:.65rem}.nav-icon{width:auto}
-  .main{margin-left:60px}.stat-grid{grid-template-columns:1fr 1fr}
-  .avatar-pick-grid{grid-template-columns:1fr 1fr}.form-grid,.two-col,.three-col{grid-template-columns:1fr}
+  /* Hide sidebar by default on mobile */
+  .sidebar{transform:translateX(-100%);transition:transform .25s ease;z-index:150;width:220px}
+  .sidebar.open{transform:translateX(0)}
+  /* Show hamburger */
+  .hamburger{display:flex}
+  /* Main takes full width */
+  .main{margin-left:0}
+  /* Topbar padding for hamburger */
+  .topbar{padding-left:60px}
+  /* Grid adjustments */
+  .stat-grid{grid-template-columns:1fr 1fr}
+  .avatar-pick-grid{grid-template-columns:1fr 1fr}
+  .form-grid,.two-col,.three-col{grid-template-columns:1fr}
 }
 </style>
 </head>
@@ -236,8 +253,16 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
 <!-- SHELL -->
 <div class="shell">
 
+  <!-- HAMBURGER (mobile) -->
+  <button class="hamburger" onclick="toggleSidebar()" id="hamburgerBtn" aria-label="Menu">
+    <span></span><span></span><span></span>
+  </button>
+
+  <!-- SIDEBAR OVERLAY (mobile) -->
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
+
   <!-- SIDEBAR -->
-  <div class="sidebar">
+  <div class="sidebar" id="sidebar">
     <div class="sidebar-brand">
       <div class="brand-logo">MRS™</div>
       <div class="brand-sub">Coach OS</div>
@@ -256,6 +281,9 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
       </div>
       <div class="nav-item" onclick="nav('analytics')" id="nav-analytics">
         <span class="nav-icon">📊</span><span>Analytics</span>
+      </div>
+      <div class="nav-item" onclick="nav('weekly-upload')" id="nav-weekly-upload">
+        <span class="nav-icon">📨</span><span>Client Weeks</span>
       </div>
       <div class="nav-item" onclick="exportData()" id="nav-export">
         <span class="nav-icon">💾</span><span>Backup Data</span>
@@ -320,6 +348,39 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
         <div id="analyticsContent"></div>
       </div>
 
+      <!-- ══ CLIENT WEEKS ══ -->
+      <div class="screen" id="screen-weekly-upload">
+        <div class="card">
+          <div class="card-title">📨 Client Weekly Files</div>
+          <div style="font-size:13px;color:var(--dim-2);margin-bottom:1.25rem;line-height:1.7">
+            When clients send you their weekly file upload it here. Their compliance scores, workout logs, RPE data, and wellness scores will be saved directly into their profile.
+          </div>
+
+          <!-- Drop zone -->
+          <div id="weeklyDropZone" style="border:2px dashed rgba(201,162,39,.35);border-radius:14px;padding:32px 20px;text-align:center;cursor:pointer;transition:all .2s;margin-bottom:1.25rem;background:rgba(201,162,39,.03)"
+            onclick="document.getElementById('weeklyFileInput').click()"
+            ondragover="event.preventDefault();this.style.borderColor='var(--gold)'"
+            ondragleave="this.style.borderColor='rgba(201,162,39,.35)'"
+            ondrop="handleWeeklyDrop(event)">
+            <div style="font-size:32px;margin-bottom:10px">📨</div>
+            <div style="font-family:Barlow Condensed,sans-serif;font-size:16px;font-weight:700;letter-spacing:.06em;color:var(--gold);margin-bottom:6px">TAP TO UPLOAD CLIENT WEEK</div>
+            <div style="font-size:12px;color:var(--dim)">Or drag and drop · Accepts .json files from client portal</div>
+          </div>
+          <input type="file" id="weeklyFileInput" accept=".json" style="display:none" multiple onchange="processWeeklyFiles(this.files)">
+
+          <!-- Results -->
+          <div id="weeklyResults"></div>
+        </div>
+
+        <!-- Processed weeks log -->
+        <div class="card">
+          <div class="card-title">Recent Uploads</div>
+          <div id="weeklyLog">
+            <div style="font-size:13px;color:var(--dim);padding:.5rem 0">No files uploaded yet this session.</div>
+          </div>
+        </div>
+      </div>
+
       <!-- ══ NEW CLIENT ══ -->
       <div class="screen" id="screen-new-client">
         <div class="card">
@@ -372,6 +433,25 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
             <div class="flag-chip" data-flag="Hip Mobility" onclick="pickFlag(this)"><div class="flag-box">✓</div><span class="flag-text">🟣 Hip Mobility</span></div>
             <div class="flag-chip" data-flag="Thoracic" onclick="pickFlag(this)"><div class="flag-box">✓</div><span class="flag-text">🟤 Thoracic</span></div>
             <div class="flag-chip" data-flag="Foot / Ankle" onclick="pickFlag(this)"><div class="flag-box">✓</div><span class="flag-text">🔵 Foot / Ankle</span></div>
+          </div>
+          <div class="section-div" style="margin-bottom:.75rem">Training Type</div>
+          <div class="form-grid" style="margin-bottom:1rem">
+            <div class="form-field">
+              <div class="form-label">Client Type</div>
+              <select id="nc-type" onchange="toggleCohortField()">
+                <option value="1on1">1-on-1</option>
+                <option value="cohort">Cohort</option>
+              </select>
+            </div>
+            <div class="form-field" id="cohortFieldWrap" style="display:none">
+              <div class="form-label">Cohort</div>
+              <select id="nc-cohort">
+                <option value="">Select cohort...</option>
+                <option value="Ironman">⚡ Ironman — Thu 5:30am</option>
+                <option value="Built Different">🍑 Built Different — Wed 6:30pm</option>
+                <option value="Built To Last">🟡 Built To Last — Fri 10am / Wed 10am</option>
+              </select>
+            </div>
           </div>
           <div class="section-div" style="margin-bottom:.75rem">Intake Interview</div>
           <div style="font-size:11px;color:var(--dim);margin-bottom:.75rem;line-height:1.6">Ask these questions verbally. Enter key responses below. These inform the program generation.</div>
@@ -433,11 +513,15 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
 
 <!-- MEASUREMENT MODAL -->
 <div class="modal-bg" id="measureModal">
-  <div class="modal">
-    <button class="modal-close" onclick="closeMeasure()">×</button>
-    <div class="modal-title" id="measureModalTitle">Record Measurements</div>
-    <div class="form-grid" id="measureFields"></div>
-    <div style="margin-top:1rem" class="btn-row">
+  <div class="modal" style="position:relative;display:flex;flex-direction:column;max-height:92vh;padding:0;overflow:hidden">
+    <div style="padding:1.25rem 1.5rem .75rem;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
+      <div class="modal-title" id="measureModalTitle" style="margin-bottom:0">Record Measurements</div>
+      <button class="modal-close" onclick="closeMeasure()" style="font-size:24px;line-height:1;padding:4px 8px">×</button>
+    </div>
+    <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem">
+      <div class="form-grid" id="measureFields"></div>
+    </div>
+    <div style="padding:.75rem 1.5rem 1.25rem;border-top:1px solid var(--border);flex-shrink:0" class="btn-row">
       <button class="btn gold" onclick="saveMeasurements()">Save Measurements</button>
       <button class="btn" onclick="closeMeasure()">Cancel</button>
     </div>
@@ -582,6 +666,28 @@ function assessGraduation(client, record) {
 }
 
 
+// ══════════════════════════════════════════════════════════════════
+// MOBILE NAV — HAMBURGER
+// ══════════════════════════════════════════════════════════════════
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebarOverlay');
+  sidebar.classList.toggle('open');
+  overlay.classList.toggle('active');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarOverlay').classList.remove('active');
+}
+
+// ══════════════════════════════════════════════════════════════════
+// COHORT FIELD TOGGLE
+// ══════════════════════════════════════════════════════════════════
+function toggleCohortField() {
+  const type = document.getElementById('nc-type').value;
+  document.getElementById('cohortFieldWrap').style.display = type === 'cohort' ? 'block' : 'none';
+}
+
 const API_KEY = 'mrs_api_key_v4';
 
 function db() {
@@ -643,7 +749,138 @@ const pageTitles = {
   'clients': 'MRS™ <em>Clients</em>',
   'profile': 'MRS™ <em>Client</em>',
   'new-client': 'MRS™ <em>New Client</em>',
+  'weekly-upload': 'MRS™ <em>Client Weeks</em>',
 };
+
+// ══════════════════════════════════════════════════════════════════
+// WEEKLY CLIENT FILE UPLOAD
+// ══════════════════════════════════════════════════════════════════
+function handleWeeklyDrop(event) {
+  event.preventDefault();
+  document.getElementById('weeklyDropZone').style.borderColor = 'rgba(201,162,39,.35)';
+  const files = event.dataTransfer.files;
+  if (files.length) processWeeklyFiles(files);
+}
+
+function processWeeklyFiles(files) {
+  const results = document.getElementById('weeklyResults');
+  const log = document.getElementById('weeklyLog');
+  results.innerHTML = '<div style="font-size:12px;color:var(--dim);margin-bottom:12px">Processing ' + files.length + ' file' + (files.length !== 1 ? 's' : '') + '...</div>';
+
+  let processed = 0;
+  const outcomes = [];
+
+  Array.from(files).forEach(file => {
+    if (!file.name.endsWith('.json')) {
+      outcomes.push({ name: file.name, success: false, msg: 'Not a JSON file' });
+      processed++;
+      if (processed === files.length) renderWeeklyResults(outcomes, log, results);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        const data = JSON.parse(e.target.result);
+
+        // Validate it is a client weekly file
+        if (!data.clientId || !data.weekKey) {
+          outcomes.push({ name: file.name, success: false, msg: 'Not a valid client week file' });
+          processed++;
+          if (processed === files.length) renderWeeklyResults(outcomes, log, results);
+          return;
+        }
+
+        // Find the client in the OS
+        const database = db();
+        const clientIdx = (database.clients || []).findIndex(c => c.id === data.clientId);
+
+        if (clientIdx === -1) {
+          outcomes.push({ name: file.name, success: false, msg: 'Client not found in OS — ' + (data.clientName || data.clientId) });
+          processed++;
+          if (processed === files.length) renderWeeklyResults(outcomes, log, results);
+          return;
+        }
+
+        const c = database.clients[clientIdx];
+
+        // Save weekly data into client profile
+        if (!c.weeklyData) c.weeklyData = [];
+
+        // Remove existing entry for this week if present
+        c.weeklyData = c.weeklyData.filter(w => w.weekKey !== data.weekKey);
+
+        // Add the new weekly data
+        c.weeklyData.push({
+          weekKey: data.weekKey,
+          uploadedAt: new Date().toISOString(),
+          weekScore: data.weekScore || 0,
+          scoreBreakdown: data.scoreBreakdown || {},
+          streak: data.streak || 0,
+          personalBest: data.personalBest || 0,
+          checkins: data.checkins || {},
+          nutritionScore: data.nutritionScore || null,
+          workoutLogs: data.workoutLogs || [],
+        });
+
+        // Update lastSeen
+        c.lastSeen = Date.now();
+        database.clients[clientIdx] = c;
+        saveDb(database);
+
+        outcomes.push({
+          name: file.name,
+          success: true,
+          clientName: c.name,
+          weekKey: data.weekKey,
+          score: data.weekScore || 0,
+          workoutCount: (data.workoutLogs || []).length,
+          streak: data.streak || 0,
+        });
+
+      } catch(err) {
+        outcomes.push({ name: file.name, success: false, msg: 'Could not read file — ' + err.message });
+      }
+
+      processed++;
+      if (processed === files.length) renderWeeklyResults(outcomes, log, results);
+    };
+    reader.readAsText(file);
+  });
+}
+
+function renderWeeklyResults(outcomes, log, results) {
+  const succeeded = outcomes.filter(o => o.success);
+  const failed = outcomes.filter(o => !o.success);
+
+  results.innerHTML = succeeded.map(o => `
+    <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:10px;padding:12px 14px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div style="font-weight:700;font-size:13px;color:var(--white)">✅ ${o.clientName}</div>
+        <div style="font-family:Bebas Neue,sans-serif;font-size:20px;color:var(--gold);letter-spacing:.04em">${o.score}<span style="font-size:11px;color:var(--dim)">/49</span></div>
+      </div>
+      <div style="font-size:11px;color:var(--dim-2)">${o.weekKey.replace('week-','Week of ')} · ${o.workoutCount} session${o.workoutCount !== 1 ? 's' : ''} logged · 🔥 ${o.streak} week streak</div>
+    </div>`).join('')
+  + failed.map(o => `
+    <div style="background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.2);border-radius:10px;padding:12px 14px;margin-bottom:8px">
+      <div style="font-size:13px;color:var(--red)">❌ ${o.name}</div>
+      <div style="font-size:11px;color:var(--dim);margin-top:3px">${o.msg}</div>
+    </div>`).join('');
+
+  // Add to log
+  if (succeeded.length) {
+    const existing = log.querySelector('.no-uploads-msg');
+    if (existing) existing.remove();
+    succeeded.forEach(o => {
+      const entry = document.createElement('div');
+      entry.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px';
+      entry.innerHTML = `<div><strong style="color:var(--white)">${o.clientName}</strong> <span style="color:var(--dim)">${o.weekKey.replace('week-','')}</span></div><div style="color:var(--gold);font-family:Bebas Neue,sans-serif;font-size:16px;letter-spacing:.04em">${o.score}/49</div>`;
+      log.prepend(entry);
+    });
+  }
+
+  toast(succeeded.length + ' week' + (succeeded.length !== 1 ? 's' : '') + ' uploaded successfully');
+}
 
 // ══════════════════════════════════════════════════════════════════
 // PSS — PERFORMANCE SCORING SYSTEM
@@ -928,6 +1165,7 @@ function buildPSSCard(c) {
 }
 
 function nav(page, data) {
+  closeSidebar(); // close mobile nav on any navigation
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   const screen = document.getElementById('screen-' + page);
@@ -1231,6 +1469,8 @@ function saveNewClient() {
     flags: [...ncFlags],
     notes: intake.goal,
     intake,
+    clientType: document.getElementById('nc-type').value || '1on1',
+    cohort: document.getElementById('nc-type').value === 'cohort' ? (document.getElementById('nc-cohort').value || '') : '',
     createdAt: Date.now(),
     lastSeen: Date.now(),
     programs: [],
@@ -1287,6 +1527,7 @@ function renderProfile(clientId) {
           <span class="profile-tag">${c.goal}</span>
           ${c.age ? `<span class="profile-tag">Age ${c.age}</span>` : ''}
           ${c.flags.map(f => `<span class="profile-tag" style="color:var(--red);border-color:rgba(220,38,38,.2)">${f}</span>`).join('')}
+          ${c.clientType === 'cohort' && c.cohort ? `<span class="profile-tag" style="color:var(--gold);border-color:rgba(201,162,39,.3);background:var(--gold-dim)">⚡ ${c.cohort}</span>` : '<span class="profile-tag" style="color:var(--green-br);border-color:rgba(34,197,94,.2)">1-on-1</span>'}
           <span class="profile-tag">${progCount} program${progCount!==1?'s':''}</span>
         </div>
       </div>
@@ -1294,6 +1535,7 @@ function renderProfile(clientId) {
         <button class="btn sm" onclick="editClient('${c.id}')">Edit</button>
         <button class="btn sm gold" onclick="printBlankLog()">🖨 Print Log</button>
         <button class="btn sm green" onclick="printProgressReport('${c.id}')">📊 Report</button>
+        <button class="btn sm" style="background:rgba(59,130,246,.1);color:var(--blue);border-color:rgba(59,130,246,.25)" onclick="exportClient('${c.id}')">📤 Export Client</button>
         ${c.status==='inactive'?`<span style="font-size:10px;color:var(--red);font-weight:700;padding:4px 8px;background:rgba(220,38,38,.1);border-radius:6px;border:1px solid rgba(220,38,38,.2)">INACTIVE — Wk ${c.dropoutWeek||'?'}</span>`:`<button class="btn sm" style="background:rgba(220,38,38,.1);color:var(--red);border-color:rgba(220,38,38,.2)" onclick="markInactive('${c.id}')">Mark Inactive</button>`}
         <button class="btn sm red" onclick="deleteClient('${c.id}')">Delete</button>
       </div>
@@ -2096,6 +2338,54 @@ function viewSavedProgram(progId, clientId) {
 // ══════════════════════════════════════════════════════════════════
 // EDIT / DELETE CLIENT
 // ══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// EXPORT SINGLE CLIENT — for sending to client portal
+// ══════════════════════════════════════════════════════════════════
+function exportClient(clientId) {
+  const database = db();
+  const c = (database.clients || []).find(x => x.id === clientId);
+  if (!c) { toast('Client not found'); return; }
+
+  const exportData = {
+    exportVersion: '1.0',
+    exportedAt: new Date().toISOString(),
+    exportedBy: 'MRS Coach OS',
+    client: {
+      id: c.id,
+      name: c.name,
+      age: c.age || '',
+      gender: c.gender || 'M',
+      avatar: c.avatar || '',
+      level: c.level || 'Beginner',
+      freq: c.freq || '3x/week',
+      goal: c.goal || '',
+      flags: c.flags || [],
+      cohort: c.cohort || '',
+      clientType: c.clientType || '1on1',
+      createdAt: c.createdAt,
+      intake: c.intake || {},
+      measurements: c.measurements || [],
+      programs: c.programs || [],
+      activeProgramId: c.activeProgramId || null,
+      sessionNotes: c.sessionNotes || [],
+      weeklyData: c.weeklyData || [],
+      pssScores: c.pssScores || [],
+      status: c.status || 'active',
+    },
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/MRS_Client_Portal.html?client=' + c.id,
+  };
+
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const safeName = (c.name || 'client').replace(/\s+/g, '_').toLowerCase();
+  a.href = url;
+  a.download = 'MRS_Client_' + safeName + '_' + c.id + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  toast(c.name + ' exported — send file to their phone 📤');
+}
+
 function editClient(clientId) {
   const data = db();
   const c = data.clients.find(x => x.id === clientId);
@@ -2776,11 +3066,21 @@ function printProgressReport(clientId) {
     +'<div class="quote-attr">\u2014 MRS\u2122 \u00b7 '+c.avatar+' \u00b7 Built For The Moment\u2122</div>'
     +'</div>'
 
-    // Footer
-    +'<div class="footer-bar">'
-    +'<div class="footer-brand"><em>MRS\u2122</em> \u00b7 Metabolic Rebuild System\u2122 \u00b7 Built For The Moment\u2122 \u00b7 Justin Holmes \u00b7 Coach Use Only</div>'
-    +'<div class="footer-brand">Generated '+new Date().toLocaleDateString()+'</div>'
-    +'</div>'
+    // Footer with QR code
+    +(function(){
+      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/MRS_Client_Portal.html?client='+c.id;
+      const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data='+encodeURIComponent(portalUrl)+'&bgcolor=0f0f0c&color=c9a227&format=png';
+      return '<div class="footer-bar" style="display:flex;align-items:center;justify-content:space-between;gap:16px">'
+        +'<div>'
+        +'<div class="footer-brand"><em>MRS\u2122</em> \u00b7 Metabolic Rebuild System\u2122 \u00b7 Built For The Moment\u2122 \u00b7 Justin Holmes \u00b7 Coach Use Only</div>'
+        +'<div class="footer-brand" style="margin-top:3px">Generated '+new Date().toLocaleDateString()+'</div>'
+        +'<div style="font-size:8px;color:rgba(242,240,232,0.4);margin-top:4px;font-family:Barlow Condensed,sans-serif;letter-spacing:.08em;text-transform:uppercase">Scan to open your MRS\u2122 Portal</div>'
+        +'</div>'
+        +'<div style="flex-shrink:0;text-align:center">'
+        +'<img src="'+qrUrl+'" width="72" height="72" style="border-radius:6px;border:1px solid rgba(201,162,39,0.3);display:block" alt="Portal QR"/>'
+        +'</div>'
+        +'</div>';
+    })()
     +'<script>document.fonts.ready.then(()=>{});<\/script>'
     +'</body></html>';
 
