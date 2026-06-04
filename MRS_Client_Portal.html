@@ -714,6 +714,18 @@ input[type=range]::-moz-range-thumb {
 }
 .prog-complete-btn:active { background: var(--golddim); }
 
+/* Week completion visual */
+.prog-session-card.week-complete {
+  border-color: rgba(34,197,94,.3);
+  background: rgba(34,197,94,.03);
+}
+.prog-session-card.week-complete .prog-session-title {
+  color: var(--green);
+}
+.prog-session-card.week-complete .prog-chevron {
+  color: var(--green);
+}
+
 /* ── NO CLIENT STATE ── */
 .no-client {
   display: flex;
@@ -2029,7 +2041,8 @@ function renderProgram(){
   const startDate=new Date(active.date||client.createdAt);
   const weekNum=Math.max(1,Math.min(8,Math.floor((new Date()-startDate)/(7*24*60*60*1000))+1));
 
-  // Parse weeks — split on ## WEEK N pattern only
+  // Parse weeks — find all ## WEEK N markers and split content between them
+  // Strip any preamble before the first ## WEEK marker (header, corrective warm-up etc)
   const weekBlocks=[];
   const weekRegex=/##\s*WEEK\s*(\d+)[^\n]*/gi;
   let lastIdx=0,lastWeek=null,lastTitle='';
@@ -2041,11 +2054,13 @@ function renderProgram(){
     }
     lastWeek=parseInt(match[1]);
     lastTitle=match[0].replace(/^##\s*/,'').trim();
+    // Content starts AFTER the ## WEEK N header line
     lastIdx=match.index+match[0].length;
   }
   if(lastWeek!==null){
     weekBlocks.push({num:lastWeek,title:lastTitle,content:text.slice(lastIdx).trim()});
   }
+  // Everything before the first ## WEEK marker is discarded (preamble/header)
 
   if(!weekBlocks.length){
     el.innerHTML=`<div class="empty-program"><div class="empty-program-icon">💪</div>Program format not recognized. Contact your coach.</div>`;
@@ -2099,18 +2114,23 @@ function renderProgram(){
       </div>`;
     }).join('');
   }).join('');
+
+  // After DOM is built, apply completion visuals from saved state
+  setTimeout(updateWeekCompletionVisuals, 0);
 }
 
 function parseSessionsFromWeek(weekContent){
-  // Find all SESSION N markers regardless of format
+  // Find SESSION N in any format: plain, **bold**, ### markdown, with colon, etc
   const allMatches=[];
   const sessRegex=/\bSESSION\s+(\d+)/gi;
   let m;
   while((m=sessRegex.exec(weekContent))!==null){
-    // Find the start of the line this SESSION marker is on
+    // Start of the line containing SESSION N
     const lineStart=weekContent.lastIndexOf('\n',m.index)+1;
+    // End of that line
     const lineEnd=weekContent.indexOf('\n',m.index);
-    allMatches.push({num:parseInt(m[1]),lineStart,contentStart:lineEnd===-1?weekContent.length:lineEnd+1});
+    const contentStart=lineEnd===-1?weekContent.length:lineEnd+1;
+    allMatches.push({num:parseInt(m[1]),lineStart,contentStart});
   }
 
   if(allMatches.length===0){
@@ -2120,6 +2140,7 @@ function parseSessionsFromWeek(weekContent){
   const sessions=[];
   for(let i=0;i<allMatches.length;i++){
     const start=allMatches[i].contentStart;
+    // End is the start of the next SESSION header line (not its content start)
     const end=i+1<allMatches.length?allMatches[i+1].lineStart:weekContent.length;
     const content=weekContent.slice(start,end).trim();
     sessions.push({num:allMatches[i].num,content,coachNote:extractCoachNote(content)});
@@ -2172,41 +2193,134 @@ function toggleProgSession(cardId){
   if(card)card.classList.toggle('open');
 }
 
-function toggleSlotCheck(sessionId,letter,event){
+function toggleSlotCheck(sessionId,slotKey,event){
   event.stopPropagation();
   const pdb=portalDb();
   if(!pdb.slotChecks)pdb.slotChecks={};
   if(!pdb.slotChecks[sessionId])pdb.slotChecks[sessionId]={};
-  pdb.slotChecks[sessionId][letter]=!pdb.slotChecks[sessionId][letter];
+  const newVal=!pdb.slotChecks[sessionId][slotKey];
+  pdb.slotChecks[sessionId][slotKey]=newVal;
   savePortalDb(pdb);
-  renderProgram();
+
+  // Update DOM in place — no re-render, session stays open
+  const checkEl=event.currentTarget;
+  checkEl.classList.toggle('checked',newVal);
+  checkEl.textContent=newVal?'✓':'';
+  const slotCard=checkEl.closest('.prog-slot-card');
+  if(slotCard)slotCard.classList.toggle('slot-done',newVal);
+
+  // Update complete button and session meta
+  updateSessionCompletionUI(sessionId);
+}
+
+function updateSessionCompletionUI(sessionId){
+  const pdb=portalDb();
+  const checks=pdb.slotChecks?.[sessionId]||{};
+  const card=document.getElementById('card-'+sessionId);
+  if(!card)return;
+
+  // Count checked slots
+  const checkedCount=Object.values(checks).filter(v=>v===true).length;
+  const totalSlots=card.querySelectorAll('.prog-slot-card').length;
+  const allDone=totalSlots>0&&checkedCount>=totalSlots;
+
+  // Update complete button text
+  const btn=card.querySelector('.prog-complete-btn');
+  if(btn)btn.textContent=allDone?'✅ Session Complete — Tap to Undo':'Mark All Complete';
+
+  // Update session meta
+  const meta=card.querySelector('.prog-session-meta');
+  if(meta){
+    const baseText=meta.dataset.base||meta.textContent.replace(' · ✅ Complete','');
+    meta.dataset.base=baseText;
+    meta.textContent=allDone?baseText+' · ✅ Complete':baseText;
+  }
+
+  // Update week completion visual
+  updateWeekCompletionVisuals();
+}
+
+function updateWeekCompletionVisuals(){
+  // For each week group check if all sessions are complete
+  const pdb=portalDb();
+
+  // Find all session cards grouped by week
+  const allCards=document.querySelectorAll('.prog-session-card');
+  const weekGroups={};
+
+  allCards.forEach(card=>{
+    const title=card.querySelector('.prog-session-title');
+    if(!title)return;
+    const weekMatch=title.textContent.match(/Week\s*(\d+)/i);
+    if(!weekMatch)return;
+    const wkNum=weekMatch[1];
+    if(!weekGroups[wkNum])weekGroups[wkNum]=[];
+    weekGroups[wkNum].push(card);
+  });
+
+  Object.entries(weekGroups).forEach(([wkNum,cards])=>{
+    const allComplete=cards.every(card=>{
+      const slots=card.querySelectorAll('.prog-slot-card');
+      if(!slots.length)return false;
+      const sessionId=card.id.replace('card-','');
+      const checks=pdb.slotChecks?.[sessionId]||{};
+      const checkedCount=Object.values(checks).filter(v=>v===true).length;
+      return checkedCount>=slots.length;
+    });
+
+    cards.forEach(card=>{
+      card.classList.toggle('week-complete',allComplete);
+    });
+  });
 }
 
 function markSessionDone(sessionId,slotCount){
   const pdb=portalDb();
   if(!pdb.slotChecks)pdb.slotChecks={};
   const current=pdb.slotChecks[sessionId]||{};
-  const checkedCount=Object.values(current).filter(v=>v).length;
+  const checkedCount=Object.values(current).filter(v=>v===true).length;
   const allChecked=checkedCount>=slotCount;
+
   if(allChecked){
     pdb.slotChecks[sessionId]={};
   } else {
-    // Check all slots by index
-    const checks={};
-    for(let i=0;i<slotCount;i++){
-      // We use A0,B1,B2,C3 etc — just mark all indexes done
-      checks[i]=true;
-    }
-    // Simpler — just store a "all complete" flag
-    pdb.slotChecks[sessionId]={__all:true,__count:slotCount};
-    // Also mark each slot by its index key
-    const letters=['A','B','B','C','D','E','F'];
-    for(let i=0;i<slotCount;i++){
-      pdb.slotChecks[sessionId][(letters[i]||'X')+i]=true;
+    // Mark all slots by their index keys
+    const card=document.getElementById('card-'+sessionId);
+    if(card){
+      const slotCards=card.querySelectorAll('.prog-slot-card');
+      slotCards.forEach((sc,i)=>{
+        const checkEl=sc.querySelector('.prog-slot-check');
+        if(checkEl){
+          const key=checkEl.getAttribute('onclick').match(/'([^']+)',event/)?.[1]||i;
+          pdb.slotChecks[sessionId][key]=true;
+        }
+      });
+    } else {
+      // Fallback
+      const letters=['A','B','B','C','D','E','F'];
+      for(let i=0;i<slotCount;i++){
+        pdb.slotChecks[sessionId][(letters[i]||'X')+i]=true;
+      }
     }
   }
+
   savePortalDb(pdb);
-  renderProgram();
+
+  // Update DOM in place
+  const card=document.getElementById('card-'+sessionId);
+  if(card){
+    const slotCards=card.querySelectorAll('.prog-slot-card');
+    slotCards.forEach(sc=>{
+      const checkEl=sc.querySelector('.prog-slot-check');
+      if(checkEl){
+        checkEl.classList.toggle('checked',!allChecked);
+        checkEl.textContent=!allChecked?'✓':'';
+      }
+      sc.classList.toggle('slot-done',!allChecked);
+    });
+  }
+
+  updateSessionCompletionUI(sessionId);
   if(!allChecked)showToast('Session complete 💪');
 }
 
