@@ -186,9 +186,10 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
 .key-card{max-width:400px;width:100%;text-align:center;background:var(--black-3);border:1px solid var(--border);border-radius:18px;padding:1.75rem}
 
 /* MODAL */
-.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;align-items:center;justify-content:center;padding:1rem}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;align-items:center;justify-content:center;padding:1rem;overflow:hidden}
 .modal-bg.active{display:flex}
-.modal{background:var(--black-3);border:1px solid var(--border-2);border-radius:18px;padding:1.5rem;width:100%;max-width:540px;max-height:90vh;overflow-y:auto}
+.modal{background:var(--black-3);border:1px solid var(--border-2);border-radius:18px;width:100%;max-width:540px;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;position:relative}
+.modal-inner-scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:1.5rem;overscroll-behavior:contain}
 .modal-title{font-family:Bebas Neue,sans-serif;font-size:22px;letter-spacing:.04em;color:var(--white);margin-bottom:1rem}
 .modal-close{float:right;background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer;line-height:1;padding:0}
 .modal-close:hover{color:var(--white)}
@@ -518,7 +519,7 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
       <div class="modal-title" id="measureModalTitle" style="margin-bottom:0">Record Measurements</div>
       <button class="modal-close" onclick="closeMeasure()" style="font-size:24px;line-height:1;padding:4px 8px">×</button>
     </div>
-    <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem">
+    <div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain;touch-action:pan-y">
       <div class="form-grid" id="measureFields"></div>
     </div>
     <div style="padding:.75rem 1.5rem 1.25rem;border-top:1px solid var(--border);flex-shrink:0" class="btn-row">
@@ -1752,37 +1753,43 @@ function openMeasure(clientId, checkpoint) {
   const c = data.clients.find(x => x.id === clientId);
   const existing = c.measurements?.[measureCheckpoint] || {};
   document.getElementById('measureModal').innerHTML = `
-    <button class="modal-close" onclick="closeMeasure()">×</button>
-    <div class="modal-title">${CP_LABELS[measureCheckpoint]} — ${c.name}</div>
-    <p style="font-size:11px;color:var(--dim);margin-bottom:1rem;line-height:1.6">${
-      measureCheckpoint==='intake'?'Baseline measurements at program start. Every number here becomes the standard to beat.':
-      measureCheckpoint==='week4'?'Week 4 reassessment. This is the first proof. Compare every number to intake.':
-      'Week 8 graduation. The full story. Compare against intake and Week 4.'
-    }</p>
-    <div class="form-grid">
-      ${MEASURE_FIELDS.filter(f=>!f.calculated&&f.key!=='putype').map(f=>`
-        <div class="form-field">
-          <div class="form-label">${f.label}${f.unit?' ('+f.unit+')':''}</div>
-          ${f.key==='kbdl'
-            ? `<input type="number" id="mf-${f.key}" value="${existing[f.key]||''}" placeholder="Reps in 60s · 24kg KB (M) / 16kg KB (F)">`
-            : `<input type="text" id="mf-${f.key}" value="${existing[f.key]||''}" placeholder="—">`
-          }
-        </div>`).join('')}
-      <div class="form-field">
-        <div class="form-label">Push-Up Type</div>
-        <select id="mf-putype">
-          <option value="Full" ${(existing.putype||'Full')==='Full'?'selected':''}>Full</option>
-          <option value="Knee" ${existing.putype==='Knee'?'selected':''}>Knee (Modified)</option>
-        </select>
+    <div style="position:relative;display:flex;flex-direction:column;max-height:88vh;overflow:hidden;border-radius:18px">
+      <div style="padding:1.1rem 1.25rem .75rem;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
+        <div class="modal-title" style="margin-bottom:0">${CP_LABELS[measureCheckpoint]} — ${c.name}</div>
+        <button class="modal-close" onclick="closeMeasure()" style="font-size:24px;padding:4px 8px">×</button>
       </div>
-      <div class="form-field" style="grid-column:1/-1">
-        <div class="form-label" style="color:var(--gold)">Waist-Hip Ratio — Auto-calculated from Waist ÷ Hips</div>
-        <div style="background:var(--black-4);border:1px solid var(--border);border-radius:9px;padding:9px 12px;font-size:13px;color:var(--dim-2)">${existing.waist&&existing.hips?(parseFloat(existing.waist)/parseFloat(existing.hips)).toFixed(3)+' (auto)':'Will calculate when Waist and Hips are entered'}</div>
+      <div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.1rem 1.25rem;overscroll-behavior:contain;touch-action:pan-y">
+        <p style="font-size:11px;color:var(--dim);margin-bottom:1rem;line-height:1.6">${
+          measureCheckpoint==='intake'?'Baseline measurements at program start. Every number here becomes the standard to beat.':
+          measureCheckpoint==='week4'?'Week 4 reassessment. This is the first proof. Compare every number to intake.':
+          'Week 8 graduation. The full story. Compare against intake and Week 4.'
+        }</p>
+        <div class="form-grid">
+          ${MEASURE_FIELDS.filter(f=>!f.calculated&&f.key!=='putype').map(f=>`
+            <div class="form-field">
+              <div class="form-label">${f.label}${f.unit?' ('+f.unit+')':''}</div>
+              ${f.key==='kbdl'
+                ? `<input type="number" id="mf-${f.key}" value="${existing[f.key]||''}" placeholder="Reps in 60s · 24kg KB (M) / 16kg KB (F)">`
+                : `<input type="text" id="mf-${f.key}" value="${existing[f.key]||''}" placeholder="—">`
+              }
+            </div>`).join('')}
+          <div class="form-field">
+            <div class="form-label">Push-Up Type</div>
+            <select id="mf-putype">
+              <option value="Full" ${(existing.putype||'Full')==='Full'?'selected':''}>Full</option>
+              <option value="Knee" ${existing.putype==='Knee'?'selected':''}>Knee (Modified)</option>
+            </select>
+          </div>
+          <div class="form-field" style="grid-column:1/-1">
+            <div class="form-label" style="color:var(--gold)">Waist-Hip Ratio — Auto-calculated from Waist ÷ Hips</div>
+            <div style="background:var(--black-4);border:1px solid var(--border);border-radius:9px;padding:9px 12px;font-size:13px;color:var(--dim-2)">${existing.waist&&existing.hips?(parseFloat(existing.waist)/parseFloat(existing.hips)).toFixed(3)+' (auto)':'Will calculate when Waist and Hips are entered'}</div>
+          </div>
+        </div>
       </div>
-    </div>
-    <div style="margin-top:1rem" class="btn-row">
-      <button class="btn gold" onclick="saveMeasurements()">Save ${CP_LABELS[measureCheckpoint]}</button>
-      <button class="btn" onclick="closeMeasure()">Cancel</button>
+      <div style="padding:.75rem 1.25rem 1.1rem;border-top:1px solid var(--border);flex-shrink:0" class="btn-row">
+        <button class="btn gold" onclick="saveMeasurements()">Save ${CP_LABELS[measureCheckpoint]}</button>
+        <button class="btn" onclick="closeMeasure()">Cancel</button>
+      </div>
     </div>`;
   document.getElementById('measureModal').classList.add('active');
 }
@@ -1819,7 +1826,9 @@ function editComplianceWeek(clientId, weekIndex) {
   const sessCount = w.sessions.length;
 
   document.getElementById('measureModal').innerHTML = `
-    <button class="modal-close" onclick="closeMeasure()">×</button>
+    <div style="position:relative;display:flex;flex-direction:column;max-height:88vh;overflow:hidden;border-radius:18px">
+      <div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain;touch-action:pan-y">
+        <button class="modal-close" onclick="closeMeasure()">×</button>
     <div class="modal-title">Edit Week ${w.week} — ${c.name}</div>
     <p style="font-size:11px;color:var(--dim);margin-bottom:1rem">Update session completion for this week.</p>
     <div style="display:flex;gap:10px;margin-bottom:1rem;flex-wrap:wrap">
@@ -1835,9 +1844,13 @@ function editComplianceWeek(clientId, weekIndex) {
       <div class="form-label">Week Note</div>
       <input type="text" id="compliance-note-edit" value="${w.note||''}" placeholder="Optional note">
     </div>
-    <div class="btn-row">
+      </div>
+      <div style="padding:.75rem 1.5rem 1.1rem;border-top:1px solid var(--border);flex-shrink:0">
+        <div class="btn-row">
       <button class="btn gold" onclick="saveComplianceEdit('${clientId}',${weekIndex},${sessCount})">Save Changes</button>
       <button class="btn" onclick="closeMeasure()">Cancel</button>
+    </div>
+      </div>
     </div>`;
   document.getElementById('measureModal').classList.add('active');
 }
@@ -2402,7 +2415,9 @@ function editClient(clientId) {
   }).join('');
 
   document.getElementById('measureModal').innerHTML = `
-    <button class="modal-close" onclick="document.getElementById('measureModal').classList.remove('active')">×</button>
+    <div style="position:relative;display:flex;flex-direction:column;max-height:88vh;overflow:hidden;border-radius:18px">
+      <div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain;touch-action:pan-y">
+        <button class="modal-close" onclick="document.getElementById('measureModal').classList.remove('active')">×</button>
     <div class="modal-title">Edit — ${c.name}</div>
 
     <div class="form-grid" style="margin-bottom:1rem">
@@ -2469,12 +2484,14 @@ function editClient(clientId) {
       <div class="form-label">Intake Notes</div>
       <textarea id="edit-notes" rows="2" style="resize:vertical">${c.notes||''}</textarea>
     </div>
-
-    <div class="btn-row">
+      </div>
+      <div style="padding:.75rem 1.5rem 1.1rem;border-top:1px solid var(--border);flex-shrink:0">
+        <div class="btn-row">
       <button class="btn gold" onclick="saveEditClient('${clientId}')">Save Changes</button>
       <button class="btn" onclick="document.getElementById('measureModal').classList.remove('active')">Cancel</button>
     </div>
-  `;
+      </div>
+    </div>`;
   document.getElementById('measureModal').classList.add('active');
 }
 
@@ -2651,7 +2668,9 @@ function addComplianceWeek(clientId) {
   const sessCount = c.freq === '2x/week' ? 2 : c.freq === '3x/week' ? 3 : 4;
 
   document.getElementById('measureModal').innerHTML = `
-    <button class="modal-close" onclick="closeMeasure()">×</button>
+    <div style="position:relative;display:flex;flex-direction:column;max-height:88vh;overflow:hidden;border-radius:18px">
+      <div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain;touch-action:pan-y">
+        <button class="modal-close" onclick="closeMeasure()">×</button>
     <div class="modal-title">Week ${weekNum} Compliance — ${c.name}</div>
     <p style="font-size:11px;color:var(--dim);margin-bottom:1rem">Did they complete each session this week?</p>
     <div style="display:flex;gap:10px;margin-bottom:1rem;flex-wrap:wrap">
@@ -2667,9 +2686,13 @@ function addComplianceWeek(clientId) {
       <div class="form-label">Week Note (optional)</div>
       <input type="text" id="compliance-note" placeholder="e.g. Missed Wednesday — travel">
     </div>
-    <div class="btn-row">
+      </div>
+      <div style="padding:.75rem 1.5rem 1.1rem;border-top:1px solid var(--border);flex-shrink:0">
+        <div class="btn-row">
       <button class="btn gold" onclick="saveComplianceWeek('${clientId}',${weekNum},${sessCount})">Save Week ${weekNum}</button>
       <button class="btn" onclick="closeMeasure()">Cancel</button>
+    </div>
+      </div>
     </div>`;
 
   // Add click styles
