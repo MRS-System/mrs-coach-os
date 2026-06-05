@@ -1647,12 +1647,70 @@ let workoutType=null,selectedRPE=null;
 // ── Init ─────────────────────────────────────────────
 function init(){
   clientId=getClientId();
-  if(clientId) client=getClientData(clientId);
+
+  // Handle URL parameters from Coach OS
+  const params=new URLSearchParams(window.location.search);
+  const setupParam=params.get('setup');
+  const programParam=params.get('program');
+
+  // ?setup= — profile onboarding link
+  if(setupParam){
+    try{
+      const decoded=JSON.parse(decodeURIComponent(setupParam));
+      if(decoded&&decoded.id&&decoded.name){
+        const pdb=portalDb();
+        pdb.clientProfile=decoded;
+        savePortalDb(pdb);
+        client=decoded;
+        clientId=decoded.id;
+        window.history.replaceState({},'',window.location.pathname);
+        setTimeout(()=>showToast('Welcome '+decoded.name+'! Profile loaded ✓'),600);
+      }
+    }catch(e){
+      setTimeout(()=>showToast('Setup link error — use Coach tab','var(--red)'),600);
+    }
+  }
+
+  // ?program= — program delivery link
+  if(programParam){
+    try{
+      const prog=JSON.parse(decodeURIComponent(programParam));
+      if(prog&&prog.clientId&&prog.block1){
+        const pdb=portalDb();
+        if(pdb.clientProfile&&pdb.clientProfile.id===prog.clientId){
+          // Find the program in client profile and update it
+          const programs=pdb.clientProfile.programs||[];
+          const idx=programs.findIndex(p=>p.id===prog.programId);
+          if(idx>=0){
+            programs[idx].block1=prog.block1;
+            programs[idx].block2=prog.block2||'';
+            programs[idx].programPending=false;
+          } else {
+            // Add as new program
+            programs.push({id:prog.programId||('p_'+Date.now()),block1:prog.block1,block2:prog.block2||'',programPending:false});
+            pdb.clientProfile.activeProgramId=programs[programs.length-1].id;
+          }
+          pdb.clientProfile.programs=programs;
+          client=pdb.clientProfile;
+          savePortalDb(pdb);
+        }
+        window.history.replaceState({},'',window.location.pathname);
+        setTimeout(()=>showToast('Program loaded ✓ Check the Program tab 💪'),600);
+      }
+    }catch(e){
+      setTimeout(()=>showToast('Program link error — contact your coach','var(--red)'),600);
+    }
+  }
+
+  // Fallback to URL client param or saved profile
+  if(!client){if(clientId)client=getClientData(clientId);}
   if(!client){const pdb=portalDb();if(pdb.clientProfile){client=pdb.clientProfile;clientId=client.id;}}
+
   if(client){
     document.getElementById('hdrName').textContent=client.name;
     document.getElementById('hdrAvatar').textContent=`${client.avatar} · ${client.cohort||'1-on-1'}`;
   }
+
   const now=new Date();
   document.getElementById('todayDate').textContent=`${DAYS[now.getDay()]}, ${MONTHS[now.getMonth()]} ${now.getDate()}`;
   renderDayStrip();
