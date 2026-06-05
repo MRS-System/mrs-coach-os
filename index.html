@@ -2381,7 +2381,7 @@ function exportClient(clientId) {
   };
 
   // Build a tiny installer HTML page
-  const profileJson = JSON.stringify(profileData).replace(/\/g,'\\').replace(/`/g,'\`');
+  const profileJson = JSON.stringify(profileData).replace(/\\/g,'\\\\').replace(/`/g,'\\`');
   const installerHtml = `<!DOCTYPE html>
 <html><head>
 <meta charset="UTF-8">
@@ -2413,7 +2413,7 @@ h1{font-size:28px;font-weight:700;color:#f2f0e8;margin-bottom:8px;line-height:1.
 </a>
 <div class="status" id="status"></div>
 <div class="note">Tap the button above to load your profile into the MRS portal. You only need to do this once.</div>
-<script>
+<scr'+'ipt>
 const PORTAL_KEY = 'mrs_client_portal_v1';
 const profile = ${profileJson};
 function install(){
@@ -2430,7 +2430,7 @@ function install(){
     window.location.href = '${portalUrl}';
   }
 }
-</script>
+<'+'/script>
 </body></html>`;
 
   // Download the installer HTML
