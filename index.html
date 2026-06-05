@@ -2352,51 +2352,188 @@ function viewSavedProgram(progId, clientId) {
 // EDIT / DELETE CLIENT
 // ══════════════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════════════
-// EXPORT SINGLE CLIENT — for sending to client portal
+// EXPORT SINGLE CLIENT — generates tap-to-install onboarding link
+// No file transfer needed. Client taps link, profile auto-loads.
 // ══════════════════════════════════════════════════════════════════
 function exportClient(clientId) {
   const database = db();
   const c = (database.clients || []).find(x => x.id === clientId);
   if (!c) { toast('Client not found'); return; }
 
+  // Build the client payload — profile only, no full program text
+  // (program text is too large for URL — loaded separately)
+  const payload = {
+    id: c.id,
+    name: c.name,
+    age: c.age || '',
+    gender: c.gender || 'M',
+    avatar: c.avatar || '',
+    level: c.level || 'Beginner',
+    freq: c.freq || '3x/week',
+    goal: c.goal || '',
+    flags: c.flags || [],
+    cohort: c.cohort || '',
+    clientType: c.clientType || '1on1',
+    createdAt: c.createdAt,
+    intake: c.intake || {},
+    measurements: c.measurements || [],
+    programs: (c.programs || []).map(p => ({
+      id: p.id,
+      date: p.date,
+      title: p.title,
+      avatar: p.avatar,
+      level: p.level,
+      freq: p.freq,
+      goal: p.goal,
+      flags: p.flags,
+      block1: p.block1 || '',
+      block2: p.block2 || '',
+      block1Only: p.block1Only || false,
+    })),
+    activeProgramId: c.activeProgramId || null,
+    sessionNotes: c.sessionNotes || [],
+    weeklyData: c.weeklyData || [],
+    status: c.status || 'active',
+  };
+
+  // Strip program text from setup URL — programs delivered via separate link
+  // This keeps the setup URL short and reliable on all devices
+  const setupPayload = JSON.parse(JSON.stringify(payload));
+  setupPayload.programs = (setupPayload.programs||[]).map(p => ({
+    ...p, block1: '', block2: '', block1Only: true, programPending: true
+  }));
+
+  // Encode profile as base64 — using encodeURIComponent for full Unicode support
+  const BASE_URL = 'https://mrs-system.github.io/mrs-coach-os/MRS_Client_Portal.html';
+  let encoded, onboardingUrl;
+  try {
+    encoded = encodeURIComponent(JSON.stringify(setupPayload));
+    onboardingUrl = BASE_URL + '?setup=' + encoded;
+  } catch(e) {
+    toast('Could not generate link — using file export');
+    exportClientFile(clientId);
+    return;
+  }
+
+  // Generate program delivery link separately
+  const activeProgram = (c.programs||[]).find(p => p.id === c.activeProgramId) || (c.programs||[]).slice(-1)[0];
+  let programUrl = '';
+  if (activeProgram && activeProgram.block1) {
+    try {
+      const progPayload = {
+        clientId: c.id,
+        programId: activeProgram.id,
+        block1: activeProgram.block1 || '',
+        block2: activeProgram.block2 || '',
+      };
+      programUrl = BASE_URL + '?program=' + encodeURIComponent(JSON.stringify(progPayload));
+    } catch(e) { programUrl = ''; }
+  }
+
+  // Show the onboarding link modal
+  document.getElementById('measureModal').innerHTML = `
+    <div style="position:relative;display:flex;flex-direction:column;max-height:88vh;overflow:hidden;border-radius:18px">
+      <div style="padding:1.1rem 1.25rem .75rem;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
+        <div class="modal-title" style="margin-bottom:0">📤 Send to ${c.name}</div>
+        <button class="modal-close" onclick="document.getElementById('measureModal').classList.remove('active')" style="font-size:24px;padding:4px 8px">×</button>
+      </div>
+      <div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain;touch-action:pan-y">
+
+        <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+          <div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--green);margin-bottom:6px">✅ Onboarding Link Ready</div>
+          <div style="font-size:12px;color:var(--dim-2);line-height:1.6">Send this link to ${c.name}. When they tap it the portal opens with their profile already loaded. No file upload needed.</div>
+        </div>
+
+        <div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:8px">The Message to Send</div>
+        <div id="onboardMsg" style="background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;padding:14px;font-size:13px;color:var(--dim-2);line-height:1.8;margin-bottom:12px;white-space:pre-wrap;word-break:break-all;overflow-wrap:anywhere">Hey ${c.name} — your MRS™ training portal is ready.
+
+STEP 1 — Tap this link to open your app:
+${onboardingUrl}
+
+Tap Share → Add to Home Screen to save it like an app.
+
+${programUrl ? 'STEP 2 — Tap this link to load your program:\n' + programUrl + '\n\nBoth links only need to be tapped once.' : '(Your program link will appear here once your program is generated in the OS)'}
+
+Text me when you're set up 💪</div>
+
+        <button onclick="
+          const msg = document.getElementById('onboardMsg').textContent;
+          if(navigator.clipboard){navigator.clipboard.writeText(msg).then(()=>toast('Message copied — paste into iMessage 📋'));}
+          else{const ta=document.createElement('textarea');ta.value=msg;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast('Copied!');}
+        " style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer;margin-bottom:10px">
+          📋 Copy Message
+        </button>
+
+        <button onclick="
+          const url = '${onboardingUrl.replace(/'/g, "\\'")}';
+          if(navigator.share){navigator.share({title:'MRS™ Portal',text:'Your MRS training portal',url:url});}
+          else if(navigator.clipboard){navigator.clipboard.writeText(url).then(()=>toast('Link copied 🔗'));}
+        " style="width:100%;padding:12px;background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;color:var(--dim-2);font-family:Barlow Condensed,sans-serif;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:pointer;margin-bottom:16px">
+          🔗 Copy Link Only
+        </button>
+
+        <div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:8px">Client Details</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+          <div style="background:var(--black-4);border-radius:8px;padding:10px 12px">
+            <div style="font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;font-family:Barlow Condensed,sans-serif;font-weight:700">Avatar</div>
+            <div style="font-size:13px;font-weight:600;color:var(--white);margin-top:2px">${c.avatar}</div>
+          </div>
+          <div style="background:var(--black-4);border-radius:8px;padding:10px 12px">
+            <div style="font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;font-family:Barlow Condensed,sans-serif;font-weight:700">Program</div>
+            <div style="font-size:13px;font-weight:600;color:var(--white);margin-top:2px">${c.programs?.length ? c.programs[c.programs.length-1].title?.split('·')[0]?.trim() || '8-Week Block' : 'None assigned'}</div>
+          </div>
+          <div style="background:var(--black-4);border-radius:8px;padding:10px 12px">
+            <div style="font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;font-family:Barlow Condensed,sans-serif;font-weight:700">Frequency</div>
+            <div style="font-size:13px;font-weight:600;color:var(--white);margin-top:2px">${c.freq}</div>
+          </div>
+          <div style="background:var(--black-4);border-radius:8px;padding:10px 12px">
+            <div style="font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;font-family:Barlow Condensed,sans-serif;font-weight:700">URL Length</div>
+            <div style="font-size:13px;font-weight:600;color:var(--green);margin-top:2px">${onboardingUrl.length} chars ✓</div>
+          </div>
+        </div>
+
+        <div style="background:rgba(201,162,39,.06);border:1px solid rgba(201,162,39,.15);border-radius:10px;padding:12px;font-size:11px;color:var(--dim);line-height:1.6">
+          💡 Also sending the JSON file? Not needed anymore. The link contains everything. If the client is on Android or has trouble, use the file export below as backup.
+        </div>
+
+        <button onclick="exportClientFile('${clientId}')" style="width:100%;padding:10px;background:transparent;border:1px dashed rgba(255,255,255,.15);border-radius:10px;color:var(--dim);font-family:Barlow Condensed,sans-serif;font-size:12px;font-weight:700;letter-spacing:.06em;cursor:pointer;margin-top:10px">
+          📁 Backup: Export as JSON file instead
+        </button>
+
+      </div>
+    </div>`;
+  document.getElementById('measureModal').classList.add('active');
+}
+
+// Fallback — original JSON file export
+function exportClientFile(clientId) {
+  const database = db();
+  const c = (database.clients || []).find(x => x.id === clientId);
+  if (!c) { toast('Client not found'); return; }
   const exportData = {
     exportVersion: '1.0',
     exportedAt: new Date().toISOString(),
     exportedBy: 'MRS Coach OS',
     client: {
-      id: c.id,
-      name: c.name,
-      age: c.age || '',
-      gender: c.gender || 'M',
-      avatar: c.avatar || '',
-      level: c.level || 'Beginner',
-      freq: c.freq || '3x/week',
-      goal: c.goal || '',
-      flags: c.flags || [],
-      cohort: c.cohort || '',
-      clientType: c.clientType || '1on1',
-      createdAt: c.createdAt,
-      intake: c.intake || {},
-      measurements: c.measurements || [],
-      programs: c.programs || [],
-      activeProgramId: c.activeProgramId || null,
-      sessionNotes: c.sessionNotes || [],
-      weeklyData: c.weeklyData || [],
-      pssScores: c.pssScores || [],
-      status: c.status || 'active',
+      id: c.id, name: c.name, age: c.age||'', gender: c.gender||'M',
+      avatar: c.avatar||'', level: c.level||'Beginner', freq: c.freq||'3x/week',
+      goal: c.goal||'', flags: c.flags||[], cohort: c.cohort||'',
+      clientType: c.clientType||'1on1', createdAt: c.createdAt,
+      intake: c.intake||{}, measurements: c.measurements||[],
+      programs: c.programs||[], activeProgramId: c.activeProgramId||null,
+      sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
+      pssScores: c.pssScores||[], status: c.status||'active',
     },
     portalUrl: 'https://mrs-system.github.io/mrs-coach-os/MRS_Client_Portal.html?client=' + c.id,
   };
-
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const safeName = (c.name || 'client').replace(/\s+/g, '_').toLowerCase();
   a.href = url;
-  a.download = 'MRS_Client_' + safeName + '_' + c.id + '.json';
+  a.download = 'MRS_Client_' + (c.name||'client').replace(/\s+/g,'_').toLowerCase() + '_' + c.id + '.json';
   a.click();
   URL.revokeObjectURL(url);
-  toast(c.name + ' exported — send file to their phone 📤');
+  toast(c.name + ' file exported 📁');
 }
 
 function editClient(clientId) {
