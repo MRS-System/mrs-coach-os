@@ -822,6 +822,7 @@ function processWeeklyFiles(files) {
           checkins: data.checkins || {},
           nutritionScore: data.nutritionScore || null,
           workoutLogs: data.workoutLogs || [],
+          slotLogs: data.slotLogs || {},
         });
 
         // Update lastSeen
@@ -2353,162 +2354,109 @@ function viewSavedProgram(progId, clientId) {
 // ══════════════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════════════
 // EXPORT SINGLE CLIENT — clean link + installer page approach
-// ══════════════════════════════════════════════════════════════════
+// =============================================
+// EXPORT SINGLE CLIENT
+// =============================================
 function exportClient(clientId) {
-  const database = db();
-  const c = (database.clients || []).find(x => x.id === clientId);
-  if (!c) { toast('Client not found'); return; }
+  var database = db();
+  var c = (database.clients || []).find(function(x){ return x.id === clientId; });
+  if (!c) { toast("Client not found"); return; }
 
-  const BASE_URL = 'https://mrs-system.github.io/mrs-coach-os/portal.html';
+  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id;
 
-  // Clean portal URL — just the client ID, nothing else
-  const portalUrl = BASE_URL + '?client=' + c.id;
-
-  // Build client profile JSON for installer
-  const profileData = {
-    id: c.id, name: c.name, age: c.age||'', gender: c.gender||'M',
-    avatar: c.avatar||'', level: c.level||'Beginner', freq: c.freq||'3x/week',
-    goal: c.goal||'', flags: c.flags||[], cohort: c.cohort||'',
-    clientType: c.clientType||'1on1', createdAt: c.createdAt,
+  var profileData = {
+    id: c.id, name: c.name, age: c.age||"", gender: c.gender||"M",
+    avatar: c.avatar||"", level: c.level||"Beginner", freq: c.freq||"3x/week",
+    goal: c.goal||"", flags: c.flags||[], cohort: c.cohort||"",
+    clientType: c.clientType||"1on1", createdAt: c.createdAt,
     intake: c.intake||{}, measurements: c.measurements||[],
-    programs: (c.programs||[]).map(p=>({
-      id:p.id, date:p.date, title:p.title||'', avatar:p.avatar||'',
-      level:p.level||'', freq:p.freq||'', goal:p.goal||'', flags:p.flags||[],
-      block1:p.block1||'', block2:p.block2||'', block1Only:p.block1Only||false
-    })),
+    programs: (c.programs||[]).map(function(p){ return {
+      id:p.id, date:p.date, title:p.title||"", avatar:p.avatar||"",
+      level:p.level||"", freq:p.freq||"", goal:p.goal||"", flags:p.flags||[],
+      block1:p.block1||"", block2:p.block2||"", block1Only:p.block1Only||false
+    }; }),
     activeProgramId: c.activeProgramId||null,
-    sessionNotes:[], weeklyData:[], status:'active'
+    sessionNotes:[], weeklyData:[], status:"active"
   };
 
-  // Build a tiny installer HTML page
-  const profileJson = JSON.stringify(profileData).replace(/\\/g,'\\\\').replace(/`/g,'\\`');
-  const installerHtml = `<!DOCTYPE html>
-<html><head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<title>MRS™ — ${c.name}</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,Barlow,sans-serif;background:#080806;color:#f2f0e8;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px;text-align:center}
-.logo{font-size:14px;letter-spacing:.2em;color:#c9a227;text-transform:uppercase;margin-bottom:8px;opacity:.7}
-h1{font-size:28px;font-weight:700;color:#f2f0e8;margin-bottom:8px;line-height:1.2}
-.avatar{display:inline-block;background:rgba(201,162,39,.12);border:1px solid rgba(201,162,39,.3);border-radius:20px;padding:6px 16px;font-size:12px;color:#c9a227;letter-spacing:.08em;text-transform:uppercase;margin-bottom:24px}
-.btn{display:block;width:100%;max-width:320px;padding:20px;background:#c9a227;border:none;border-radius:16px;color:#080806;font-size:20px;font-weight:700;letter-spacing:.04em;cursor:pointer;margin:0 auto 16px;transition:opacity .15s}
-.btn:active{opacity:.85}
-.btn2{display:block;width:100%;max-width:320px;padding:14px;background:transparent;border:1.5px solid rgba(201,162,39,.3);border-radius:14px;color:#c9a227;font-size:14px;font-weight:600;cursor:pointer;margin:0 auto;text-decoration:none}
-.status{font-size:13px;color:#c9a227;margin-top:16px;min-height:20px;font-weight:600}
-.note{font-size:11px;color:rgba(242,240,232,0.35);margin-top:24px;line-height:1.6;max-width:280px}
-</style>
-</head>
-<body>
-<div class="logo">MRS™ · Built For The Moment™</div>
-<h1>Hey ${c.name}!</h1>
-<div class="avatar">${c.avatar} · ${c.freq}</div>
-<button class="btn" onclick="install()">
-  ✓ Install My Profile
-</button>
-<a class="btn2" href="${portalUrl}" id="openLink" style="display:none">
-  Open My Portal →
-</a>
-<div class="status" id="status"></div>
-<div class="note">Tap the button above to load your profile into the MRS portal. You only need to do this once.</div>
-<scr'+'ipt>
-const PORTAL_KEY = 'mrs_client_portal_v1';
-const profile = ${profileJson};
-function install(){
-  try{
-    const existing = JSON.parse(localStorage.getItem(PORTAL_KEY)||'{}');
-    existing.clientProfile = profile;
-    localStorage.setItem(PORTAL_KEY, JSON.stringify(existing));
-    document.getElementById('status').textContent = '✓ Profile installed!';
-    document.querySelector('.btn').textContent = '✓ Done!';
-    document.querySelector('.btn').style.background = '#22c55e';
-    document.getElementById('openLink').style.display = 'block';
-  }catch(e){
-    document.getElementById('status').textContent = 'Error — open portal manually';
-    window.location.href = '${portalUrl}';
+  var profileJson = JSON.stringify(profileData);
+  var so = "<scr"+"ipt>";
+  var sc = "<"+"/"+"script>";
+
+  var parts = [
+    "<!DOCTYPE html><html><head>",
+    "<meta charset=\"UTF-8\">",
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+    "<title>MRS Setup - " + c.name + "</title>",
+    "<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;background:#080806;color:#f2f0e8;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px;text-align:center}h1{font-size:26px;font-weight:700;color:#f2f0e8;margin-bottom:8px}.av{display:inline-block;background:rgba(201,162,39,.12);border:1px solid rgba(201,162,39,.3);border-radius:20px;padding:6px 16px;font-size:12px;color:#c9a227;letter-spacing:.08em;text-transform:uppercase;margin-bottom:28px}.btn{display:block;width:100%;max-width:320px;padding:20px;background:#c9a227;border:none;border-radius:16px;color:#080806;font-size:20px;font-weight:700;cursor:pointer;margin:0 auto 16px;-webkit-appearance:none}.link{display:none;width:100%;max-width:320px;padding:14px;background:transparent;border:1.5px solid rgba(201,162,39,.3);border-radius:14px;color:#c9a227;font-size:14px;text-decoration:none;text-align:center;margin:0 auto}.status{font-size:13px;color:#22c55e;margin-top:16px;font-weight:600}.note{font-size:11px;color:rgba(242,240,232,.35);margin-top:24px;line-height:1.6;max-width:280px}</style></head><body>",
+    "<h1>Hey " + c.name + "!</h1>",
+    "<div class=\"av\">" + c.avatar + " - " + c.freq + "</div>",
+    "<button class=\"btn\" id=\"ib\" onclick=\"doInstall()\">Install My Profile</button>",
+    "<a class=\"link\" id=\"ol\" href=\"" + portalUrl + "\">Open My Portal</a>",
+    "<div class=\"status\" id=\"st\"></div>",
+    "<div class=\"note\">Tap the button above to load your profile. You only need to do this once.</div>",
+    so,
+    "var P=" + profileJson + ";",
+    "var KEY=\"mrs_client_portal_v1\";",
+    "function doInstall(){try{var d=JSON.parse(localStorage.getItem(KEY)||\"{}\");d.clientProfile=P;localStorage.setItem(KEY,JSON.stringify(d));document.getElementById(\"ib\").textContent=\"Profile installed! Tap below.\";document.getElementById(\"ib\").style.background=\"#22c55e\";document.getElementById(\"st\").textContent=\"Your profile is ready!\";document.getElementById(\"ol\").style.display=\"block\";}catch(e){document.getElementById(\"st\").textContent=\"Error: \"+e.message;}}",
+    sc,
+    "</body></html>"
+  ];
+
+  var installerHtml = parts.join("\n");
+  var blob = new Blob([installerHtml], { type: "text/html" });
+  var blobUrl = URL.createObjectURL(blob);
+  var link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = "MRS_Setup_" + (c.name || "").replace(/\s+/g, "_") + ".html";
+  link.click();
+  URL.revokeObjectURL(blobUrl);
+
+  var msg = "Hey " + c.name + " - your MRS portal is ready.\n\n"
+    + "1. Open the setup file I am sending you and tap Install My Profile.\n\n"
+    + "2. Then open this link and save it to your home screen:\n"
+    + portalUrl + "\n\nText me when you are set up";
+
+  document.getElementById("measureModal").innerHTML =
+    '<div style="position:relative;display:flex;flex-direction:column;max-height:88vh;overflow:hidden;border-radius:18px">'
+    + '<div style="padding:1.1rem 1.25rem .75rem;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">'
+    + '<div class="modal-title" style="margin-bottom:0">Send to ' + c.name + '</div>'
+    + '<button class="modal-close" onclick="document.getElementById(\'measureModal\').classList.remove(\'active\')" style="font-size:24px;padding:4px 8px">x</button>'
+    + '</div>'
+    + '<div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain">'
+    + '<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:12px;padding:14px;margin-bottom:16px">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--green);margin-bottom:4px">Setup file downloaded to Downloads</div>'
+    + '<div style="font-size:12px;color:var(--dim-2);line-height:1.6">Send the file and the message below to ' + c.name + '.</div>'
+    + '</div>'
+    + '<div style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;font-family:Barlow Condensed,sans-serif">Message to Send</div>'
+    + '<div style="background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;padding:14px;font-size:13px;color:var(--dim-2);line-height:1.9;margin-bottom:12px;white-space:pre-wrap;word-break:break-all">' + msg + '</div>'
+    + '<button onclick="copyOnboardMessage(this)" data-name="' + c.name + '" data-url="' + portalUrl + '" style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer;margin-bottom:10px">Copy Message</button>'
+    + '<button onclick="copyOnboardMessage(this)" data-name="" data-url="' + portalUrl + '" data-linkonly="1" style="width:100%;padding:12px;background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;color:var(--dim-2);font-family:Barlow Condensed,sans-serif;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:pointer">Copy Link Only</button>'
+    + '</div></div>';
+
+  document.getElementById("measureModal").classList.add("active");
+}
+
+function copyOnboardMessage(btn) {
+  var name = btn.getAttribute('data-name');
+  var url = btn.getAttribute('data-url');
+  var linkOnly = btn.getAttribute('data-linkonly');
+  var text = linkOnly
+    ? url
+    : 'Hey ' + name + ' - your MRS portal is ready.\n\n1. Open the setup file I am sending you and tap Install My Profile.\n\n2. Then open this link and save to your home screen:\n' + url + '\n\nText me when you are set up';
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(function(){ toast(linkOnly ? 'Link copied' : 'Message copied'); });
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast(linkOnly ? 'Link copied' : 'Message copied');
   }
 }
-<'+'/script>
-</body></html>`;
 
-  // Download the installer HTML
-  const blob = new Blob([installerHtml], { type: 'text/html' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'MRS_Setup_' + (c.name||'').replace(/\s+/g,'_') + '.html';
-  a.click();
-  URL.revokeObjectURL(url);
-
-  // Show the modal with clean instructions
-  document.getElementById('measureModal').innerHTML = `
-    <div style="position:relative;display:flex;flex-direction:column;max-height:88vh;overflow:hidden;border-radius:18px">
-      <div style="padding:1.1rem 1.25rem .75rem;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
-        <div class="modal-title" style="margin-bottom:0">📤 Send to ${c.name}</div>
-        <button class="modal-close" onclick="document.getElementById('measureModal').classList.remove('active')" style="font-size:24px;padding:4px 8px">×</button>
-      </div>
-      <div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain;touch-action:pan-y">
-
-        <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:12px;padding:14px 16px;margin-bottom:16px">
-          <div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--green);margin-bottom:4px">✅ Installer File Downloaded</div>
-          <div style="font-size:12px;color:var(--dim-2);line-height:1.6">A setup file has been saved to your Downloads. Send it + the portal link below to ${c.name}.</div>
-        </div>
-
-        <div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:8px">What to Send</div>
-
-        <div style="background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;padding:14px;font-size:13px;color:var(--dim-2);line-height:1.9;margin-bottom:12px">
-          <strong style="color:var(--white)">Message to send:</strong><br><br>
-          Hey ${c.name} — your MRS portal is ready. Two things:<br><br>
-          1️⃣ I'm sending you a setup file. Open it and tap <em>Install My Profile</em>.<br><br>
-          2️⃣ Then open this link and save it to your home screen:<br>
-          <span style="color:var(--gold);word-break:break-all">${portalUrl}</span><br><br>
-          Text me when you're set up 💪
-        </div>
-
-        <button onclick="
-          const msg = 'Hey ${c.name} — your MRS portal is ready. Two things:\n\n1️⃣ Open the setup file I sent you and tap Install My Profile.\n\n2️⃣ Then open this link and save to your home screen:\n${portalUrl}\n\nText me when you\'re set up 💪';
-          if(navigator.clipboard){navigator.clipboard.writeText(msg).then(()=>toast('Message copied 📋'));}
-        " style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer;margin-bottom:10px">
-          📋 Copy Message
-        </button>
-
-        <button onclick="
-          if(navigator.clipboard){navigator.clipboard.writeText('${portalUrl}').then(()=>toast('Portal link copied 🔗'));}
-        " style="width:100%;padding:12px;background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;color:var(--dim-2);font-family:Barlow Condensed,sans-serif;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:pointer;margin-bottom:16px">
-          🔗 Copy Portal Link Only
-        </button>
-
-        <div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:8px">How It Works</div>
-        <div style="background:var(--black-4);border-radius:10px;padding:12px;font-size:12px;color:var(--dim);line-height:1.7;margin-bottom:12px">
-          <strong style="color:var(--dim-2)">Setup file</strong> — opens in Safari, one tap installs the profile. No file management.<br>
-          <strong style="color:var(--dim-2)">Portal link</strong> — 87 characters, clean, tappable in any text.
-        </div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div style="background:var(--black-4);border-radius:8px;padding:10px 12px">
-            <div style="font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;font-family:Barlow Condensed,sans-serif;font-weight:700">Client</div>
-            <div style="font-size:13px;font-weight:600;color:var(--white);margin-top:2px">${c.name}</div>
-          </div>
-          <div style="background:var(--black-4);border-radius:8px;padding:10px 12px">
-            <div style="font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;font-family:Barlow Condensed,sans-serif;font-weight:700">Avatar</div>
-            <div style="font-size:13px;font-weight:600;color:var(--white);margin-top:2px">${c.avatar}</div>
-          </div>
-          <div style="background:var(--black-4);border-radius:8px;padding:10px 12px">
-            <div style="font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;font-family:Barlow Condensed,sans-serif;font-weight:700">Program</div>
-            <div style="font-size:13px;font-weight:600;color:${c.programs&&c.programs.length?'var(--white)':'var(--red)'};margin-top:2px">${c.programs&&c.programs.length?'Ready':'Not generated yet'}</div>
-          </div>
-          <div style="background:var(--black-4);border-radius:8px;padding:10px 12px">
-            <div style="font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;font-family:Barlow Condensed,sans-serif;font-weight:700">Portal URL</div>
-            <div style="font-size:11px;font-weight:600;color:var(--green);margin-top:2px">87 chars ✓</div>
-          </div>
-        </div>
-
-      </div>
-    </div>`;
-  document.getElementById('measureModal').classList.add('active');
-}
 function exportClientFile(clientId) {
   const database = db();
   const c = (database.clients || []).find(x => x.id === clientId);
@@ -2527,7 +2475,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id,
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/MRS_Client_Portal.html?client=' + c.id,
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -3231,7 +3179,7 @@ function printProgressReport(clientId) {
 
     // Footer with QR code
     +(function(){
-      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id;
+      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/MRS_Client_Portal.html?client='+c.id;
       const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data='+encodeURIComponent(portalUrl)+'&bgcolor=0f0f0c&color=c9a227&format=png';
       return '<div class="footer-bar" style="display:flex;align-items:center;justify-content:space-between;gap:16px">'
         +'<div>'
