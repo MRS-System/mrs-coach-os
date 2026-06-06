@@ -689,6 +689,45 @@ input[type=range]::-moz-range-thumb {
   border-color: var(--green);
 }
 .prog-slot-check:active { transform: scale(.9); }
+
+/* Slot log input */
+.slot-log-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 14px 12px 50px;
+  align-items: center;
+}
+.slot-log-input {
+  flex: 1;
+  background: var(--black3);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--white);
+  font-family: Barlow, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+  min-width: 0;
+}
+.slot-log-input:focus { border-color: var(--gold); }
+.slot-log-input::placeholder { color: var(--dim); font-weight: 400; }
+.slot-log-label {
+  font-size: 10px;
+  color: var(--dim);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.slot-prev {
+  font-size: 10px;
+  color: var(--gold);
+  padding: 0 14px 8px 50px;
+  font-style: italic;
+}
 .prog-slot-cue {
   font-size: 12px;
   color: var(--dim2);
@@ -1949,12 +1988,29 @@ function checkStreak(){
 function sendToCoach(){
   const pdb=portalDb(),scores=calcWeekScore(),wk=weekKey();
   const days=getWeekDays();
+
   // Collect workout logs for the week
   const workoutLogs=days.map(d=>{
     const ci=pdb.checkins[d.key];
     if(!ci||ci.workout!=='yes')return null;
     return{date:d.key,week:ci.workoutWeek,session:ci.workoutSession,rpe:ci.workoutRPE,lift:ci.workoutLift||''};
   }).filter(Boolean);
+
+  // Collect slot logs (progressive overload data)
+  const slotLogs={};
+  if(pdb.slotChecks){
+    Object.entries(pdb.slotChecks).forEach(([sessionId,checks])=>{
+      const logs={};
+      Object.entries(checks).forEach(([key,val])=>{
+        if(key.endsWith('_log')&&val&&(val.weight||val.reps)){
+          const slotKey=key.replace('_log','');
+          logs[slotKey]={weight:val.weight,reps:val.reps,unit:val.unit||'lbs',ts:val.ts};
+        }
+      });
+      if(Object.keys(logs).length)slotLogs[sessionId]=logs;
+    });
+  }
+
   const payload={
     clientId,clientName:client?.name||'Unknown',weekKey:wk,
     generatedAt:new Date().toISOString(),
@@ -1963,6 +2019,7 @@ function sendToCoach(){
     checkins:Object.fromEntries(days.map(d=>[d.key,pdb.checkins[d.key]||null])),
     nutritionScore:pdb.weekScores?.[wk]?.nutrition||null,
     workoutLogs,
+    slotLogs,
   };
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob);
@@ -2101,8 +2158,11 @@ function renderProgram(){
           ${sess.coachNote?`<div class="prog-coach-note">📋 ${sess.coachNote}</div>`:''}
           ${slots.map((slot,si)=>{
             const slotKey=slot.letter+si;
+            const slotLog=completedSlots[slotKey+'_log']||null;
+            const prevLog=getPrevSlotLog(sessionId,slotKey);
+            const isDone=completedSlots[slotKey]===true;
             return`
-            <div class="prog-slot-card ${completedSlots[slotKey]?'slot-done':''}">
+            <div class="prog-slot-card ${isDone?'slot-done':''}" id="slot-${sessionId}-${slotKey}">
               <div class="prog-slot-top">
                 <div class="prog-slot-badge">${slot.letter}</div>
                 <div class="prog-slot-info">
@@ -2110,12 +2170,35 @@ function renderProgram(){
                   ${slot.spec?`<div class="prog-slot-spec">${slot.spec}</div>`:''}
                   ${slot.track?`<div class="prog-slot-track">🎯 ${slot.track}</div>`:''}
                 </div>
-                <div class="prog-slot-check ${completedSlots[slotKey]?'checked':''}"
+                <div class="prog-slot-check ${isDone?'checked':''}"
                   onclick="toggleSlotCheck('${sessionId}','${slotKey}',event)">
-                  ${completedSlots[slotKey]?'✓':''}
+                  ${isDone?'✓':''}
                 </div>
               </div>
               ${slot.cue?`<div class="prog-slot-cue">"${slot.cue}"</div>`:''}
+              ${prevLog?`<div class="slot-prev">Last: ${prevLog.weight} × ${prevLog.reps} — beat it</div>`:''}
+              <div class="slot-log-row">
+                <span class="slot-log-label">Top set</span>
+                <input type="number" class="slot-log-input" id="slw-${sessionId}-${slotKey}"
+                  placeholder="${prevLog?prevLog.weight:'weight'}"
+                  value="${slotLog?slotLog.weight:''}"
+                  onchange="saveSlotLog('${sessionId}','${slotKey}',this)"
+                  style="max-width:80px" min="0">
+                <span class="slot-log-label">×</span>
+                <input type="number" class="slot-log-input" id="slr-${sessionId}-${slotKey}"
+                  placeholder="${prevLog?prevLog.reps:'reps'}"
+                  value="${slotLog?slotLog.reps:''}"
+                  onchange="saveSlotLog('${sessionId}','${slotKey}',this)"
+                  style="max-width:70px" min="0">
+                <select class="slot-log-input" id="slu-${sessionId}-${slotKey}"
+                  onchange="saveSlotLog('${sessionId}','${slotKey}',this)"
+                  style="max-width:70px;padding:8px 6px">
+                  <option value="lbs" ${(!slotLog||slotLog.unit==='lbs')?'selected':''}>lbs</option>
+                  <option value="kg" ${slotLog&&slotLog.unit==='kg'?'selected':''}>kg</option>
+                  <option value="bw" ${slotLog&&slotLog.unit==='bw'?'selected':''}>bw</option>
+                  <option value="sec" ${slotLog&&slotLog.unit==='sec'?'selected':''}>sec</option>
+                </select>
+              </div>
             </div>
           `}).join('')}
           ${slots.length>0?`<button class="prog-complete-btn" onclick="markSessionDone('${sessionId}',${slots.length})">
@@ -2204,6 +2287,58 @@ function toggleProgSession(cardId){
   if(card)card.classList.toggle('open');
 }
 
+function saveSlotLog(sessionId,slotKey,el){
+  const pdb=portalDb();
+  if(!pdb.slotChecks)pdb.slotChecks={};
+  if(!pdb.slotChecks[sessionId])pdb.slotChecks[sessionId]={};
+
+  const weightEl=document.getElementById('slw-'+sessionId+'-'+slotKey);
+  const repsEl=document.getElementById('slr-'+sessionId+'-'+slotKey);
+  const unitEl=document.getElementById('slu-'+sessionId+'-'+slotKey);
+
+  const weight=weightEl?weightEl.value:'';
+  const reps=repsEl?repsEl.value:'';
+  const unit=unitEl?unitEl.value:'lbs';
+
+  if(weight||reps){
+    pdb.slotChecks[sessionId][slotKey+'_log']={
+      weight:weight||'',
+      reps:reps||'',
+      unit,
+      ts:Date.now()
+    };
+    savePortalDb(pdb);
+  }
+}
+
+function getPrevSlotLog(sessionId,slotKey){
+  // Look for the same slot key in a previous session of the same week
+  // Session IDs are formatted prog-wN-sN — find same slot in prior session
+  const pdb=portalDb();
+  if(!pdb.slotChecks)return null;
+
+  // Parse current session week and session number
+  const match=sessionId.match(/prog-w(\d+)-s(\d+)/);
+  if(!match)return null;
+  const wk=parseInt(match[1]);
+  const sess=parseInt(match[2]);
+
+  // Check same slot in previous session (same week or prior week)
+  const candidates=[];
+  for(let s=sess-1;s>=1;s--){
+    const prevId='prog-w'+wk+'-s'+s;
+    const log=pdb.slotChecks[prevId]?.[slotKey+'_log'];
+    if(log&&(log.weight||log.reps)){candidates.push(log);break;}
+  }
+  // Also check last week same session
+  if(!candidates.length&&wk>1){
+    const prevId='prog-w'+(wk-1)+'-s'+sess;
+    const log=pdb.slotChecks[prevId]?.[slotKey+'_log'];
+    if(log&&(log.weight||log.reps))candidates.push(log);
+  }
+  return candidates[0]||null;
+}
+
 function toggleSlotCheck(sessionId,slotKey,event){
   event.stopPropagation();
   const pdb=portalDb();
@@ -2211,16 +2346,15 @@ function toggleSlotCheck(sessionId,slotKey,event){
   if(!pdb.slotChecks[sessionId])pdb.slotChecks[sessionId]={};
   const newVal=!pdb.slotChecks[sessionId][slotKey];
   pdb.slotChecks[sessionId][slotKey]=newVal;
+  // Auto-save log inputs at time of check
+  if(newVal) saveSlotLog(sessionId,slotKey,null);
   savePortalDb(pdb);
-
-  // Update DOM in place — no re-render, session stays open
+  // Update DOM in place
   const checkEl=event.currentTarget;
   checkEl.classList.toggle('checked',newVal);
   checkEl.textContent=newVal?'✓':'';
   const slotCard=checkEl.closest('.prog-slot-card');
   if(slotCard)slotCard.classList.toggle('slot-done',newVal);
-
-  // Update complete button and session meta
   updateSessionCompletionUI(sessionId);
 }
 
