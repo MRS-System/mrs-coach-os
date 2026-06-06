@@ -243,11 +243,14 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
     <div style="font-family:Bebas Neue,sans-serif;font-size:42px;letter-spacing:.06em;color:var(--gold);line-height:1;margin-bottom:4px">MRS™</div>
     <div style="font-family:Barlow Condensed,sans-serif;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);margin-bottom:1.25rem">Built For The Moment™ · Coach OS</div>
     <div style="font-size:24px;margin-bottom:.6rem">🔑</div>
-    <div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin-bottom:8px">Anthropic API Key</div>
-    <p style="font-size:11px;color:var(--dim);line-height:1.6;margin-bottom:1rem">Enter once. Saved permanently on this device.<br><strong style="color:var(--dim-2)">console.anthropic.com → API Keys</strong></p>
+    <div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin-bottom:8px">Coaching API Key</div>
+    <p style="font-size:11px;color:var(--dim);line-height:1.6;margin-bottom:.75rem">Program generation key. Enter once, saved permanently.<br><strong style="color:var(--dim-2)">console.anthropic.com → API Keys</strong></p>
     <input type="password" id="apiKeyInput" placeholder="sk-ant-..." style="margin-bottom:8px">
+    <div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;margin-top:.5rem">NutriReader API Key</div>
+    <p style="font-size:11px;color:var(--dim);line-height:1.6;margin-bottom:.75rem">Separate key for client food scanning. Create at console.anthropic.com with a $25/mo spend limit.<br><strong style="color:var(--dim-2)">Name it: MRS NutriReader</strong></p>
+    <input type="password" id="nrKeyInput" placeholder="sk-ant-..." style="margin-bottom:12px">
     <button onclick="saveKey()" style="width:100%;padding:13px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:16px;letter-spacing:.1em;cursor:pointer;margin-bottom:8px">SAVE AND ACTIVATE →</button>
-    <p style="font-size:10px;color:var(--dim)">~$0.05 per 4-week block generated</p>
+    <p style="font-size:10px;color:var(--dim)">~$0.05 per program block · ~$0.01 per food scan</p>
   </div>
 </div>
 
@@ -292,17 +295,16 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
       <div class="nav-item" onclick="importData()">
         <span class="nav-icon">📥</span><span>Restore Backup</span>
       </div>
-      <div class="nav-item" onclick="printBlankLog()">
-        <span class="nav-icon">🖨</span><span>Print Log</span>
-      </div>
-      <div class="nav-item" onclick="printScorecard()">
-        <span class="nav-icon">📋</span><span>Scorecard</span>
-      </div>
+
     </nav>
     <div class="sidebar-footer">
       <div class="key-status" onclick="resetKey()">
         <div class="key-dot" id="keyDot"></div>
-        <span>API Key</span>
+        <span>Coaching Key</span>
+      </div>
+      <div class="key-status" style="margin-top:6px" onclick="openNRKeyModal()">
+        <div class="key-dot inactive" id="nrDot"></div>
+        <span>NutriReader Key</span>
       </div>
     </div>
   </div>
@@ -690,6 +692,7 @@ function toggleCohortField() {
 }
 
 const API_KEY = 'mrs_api_key_v4';
+const NR_KEY = 'mrs_nutrireader_key_v1';
 
 function db() {
   try { return JSON.parse(localStorage.getItem(DB_KEY)) || { clients: [] }; }
@@ -713,6 +716,18 @@ function clearKey() {
   document.cookie = API_KEY + '=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
 }
 
+// NutriReader key — separate from coaching key, embedded in client exports
+function getNRKey() {
+  try { const k = localStorage.getItem(NR_KEY); if(k) return k; } catch(e) {}
+  return null;
+}
+function setNRKey(k) {
+  try { localStorage.setItem(NR_KEY, k); } catch(e) {}
+}
+function clearNRKey() {
+  try { localStorage.removeItem(NR_KEY); } catch(e) {}
+}
+
 // ══════════════════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════════════════
@@ -723,23 +738,63 @@ function init() {
   } else {
     document.getElementById('keyDot').classList.remove('inactive');
   }
+  if (getNRKey()) {
+    document.getElementById('nrDot').classList.remove('inactive');
+  }
   renderDashboard();
+}
+
+function openNRKeyModal() {
+  const existing = getNRKey();
+  document.getElementById('measureModal').innerHTML =
+    '<div style="position:relative;display:flex;flex-direction:column;max-height:88vh;overflow:hidden;border-radius:18px">'
+    + '<div style="padding:1.1rem 1.25rem .75rem;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">'
+    + '<div class="modal-title" style="margin-bottom:0">🍎 NutriReader Key</div>'
+    + '<button class="modal-close" onclick="document.getElementById(\'measureModal\').classList.remove(\'active\')" style="font-size:24px;padding:4px 8px">×</button>'
+    + '</div>'
+    + '<div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain">'
+    + '<p style="font-size:12px;color:var(--dim-2);line-height:1.7;margin-bottom:1rem">This key powers client food scanning. Separate from your coaching key. Create it at <strong style="color:var(--white)">console.anthropic.com</strong> — name it <strong style="color:var(--gold)">MRS NutriReader</strong> — set a $25/mo spend limit.</p>'
+    + (existing ? '<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--green)">✅ Key saved — ends in ···' + existing.slice(-4) + '</div>' : '')
+    + '<div class="form-field" style="margin-bottom:1rem">'
+    + '<div class="form-label">NutriReader API Key</div>'
+    + '<input type="password" id="nrKeyStandalone" placeholder="sk-ant-..." style="width:100%">'
+    + '</div>'
+    + '<button onclick="saveNRKeyOnly()" style="width:100%;padding:13px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:16px;letter-spacing:.1em;cursor:pointer;margin-bottom:8px">Save NutriReader Key</button>'
+    + (existing ? '<button onclick="clearNRKey();document.getElementById(\'nrDot\').classList.add(\'inactive\');document.getElementById(\'measureModal\').classList.remove(\'active\');toast(\'NutriReader key removed\');" style="width:100%;padding:10px;background:transparent;border:1px solid rgba(220,38,38,.3);border-radius:10px;color:var(--red);font-family:Barlow Condensed,sans-serif;font-size:13px;font-weight:700;letter-spacing:.08em;cursor:pointer">Remove Key</button>' : '')
+    + '</div></div>';
+  document.getElementById('measureModal').classList.add('active');
 }
 
 function saveKey() {
   const k = document.getElementById('apiKeyInput').value.trim();
-  if (!k.startsWith('sk-ant-')) { alert('Key should start with sk-ant-'); return; }
+  const nk = document.getElementById('nrKeyInput').value.trim();
+  if (!k.startsWith('sk-ant-')) { alert('Coaching key should start with sk-ant-'); return; }
   setKey(k);
+  if (nk && nk.startsWith('sk-ant-')) {
+    setNRKey(nk);
+    document.getElementById('nrDot').classList.remove('inactive');
+  }
   document.getElementById('keyScreen').style.display = 'none';
   document.getElementById('keyDot').classList.remove('inactive');
-  toast('API key saved permanently ✓');
+  toast('Keys saved permanently ✓');
 }
 
 function resetKey() {
-  if (!confirm('Remove API key from this device?')) return;
+  if (!confirm('Remove API keys from this device?')) return;
   clearKey();
+  clearNRKey();
   document.getElementById('keyDot').classList.add('inactive');
+  document.getElementById('nrDot').classList.add('inactive');
   document.getElementById('keyScreen').style.display = 'flex';
+}
+
+function saveNRKeyOnly() {
+  const nk = document.getElementById('nrKeyStandalone').value.trim();
+  if (!nk.startsWith('sk-ant-')) { toast('Key should start with sk-ant-'); return; }
+  setNRKey(nk);
+  document.getElementById('nrDot').classList.remove('inactive');
+  document.getElementById('measureModal').classList.remove('active');
+  toast('NutriReader key saved ✓');
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -823,6 +878,8 @@ function processWeeklyFiles(files) {
           nutritionScore: data.nutritionScore || null,
           workoutLogs: data.workoutLogs || [],
           slotLogs: data.slotLogs || {},
+          mealScans: data.mealScans || {},
+          avgNutriScore: data.avgNutriScore || null,
         });
 
         // Update lastSeen
@@ -1037,7 +1094,51 @@ function calcPSS(record, gender) {
     ? Math.round((structVals.reduce((a,b) => a+b, 0) / structVals.length) * 10) / 10
     : null;
 
-  return { perfScore, structScore, perfScores };
+  // ── CARDIOVASCULAR SCORE ───────────────────────────────────────
+  // RHR: American Heart Association standards
+  function scoreRHR(bpm) {
+    if (!bpm || isNaN(bpm)) return null;
+    const r = parseFloat(bpm);
+    if (r <= 55) return 10; // Athlete
+    if (r <= 60) return 9;
+    if (r <= 65) return 8;
+    if (r <= 70) return 7;  // Good
+    if (r <= 75) return 6;
+    if (r <= 80) return 5;  // Average
+    if (r <= 85) return 4;
+    if (r <= 90) return 3;  // Above average risk
+    if (r <= 100) return 2;
+    return 1;               // Tachycardic — flag immediately
+  }
+
+  // BP: AHA/ACC 2017 guidelines
+  function scoreBP(bp) {
+    if (!bp || typeof bp !== 'string') return null;
+    const parts = bp.split('/');
+    if (parts.length !== 2) return null;
+    const sys = parseFloat(parts[0]);
+    const dia = parseFloat(parts[1]);
+    if (isNaN(sys) || isNaN(dia)) return null;
+    // Score on worst of systolic/diastolic
+    if (sys < 120 && dia < 80) return 10;  // Normal
+    if (sys < 130 && dia < 80) return 8;   // Elevated
+    if (sys < 140 || dia < 90) return 6;   // Stage 1 Hypertension
+    if (sys < 180 || dia < 120) return 3;  // Stage 2 Hypertension
+    return 1;                               // Crisis — flag immediately
+  }
+
+  const rhrScore = scoreRHR(record.rhr);
+  const bpScore  = scoreBP(record.bp);
+  const cardioVals = [rhrScore, bpScore].filter(v => v !== null);
+  const cardioScore = cardioVals.length > 0
+    ? Math.round((cardioVals.reduce((a,b) => a+b, 0) / cardioVals.length) * 10) / 10
+    : null;
+
+  // BP flag for clinical alert (Stage 2+)
+  const bpFlag = record.bp ? scoreBP(record.bp) !== null && scoreBP(record.bp) <= 3 : false;
+  const rhrFlag = record.rhr ? parseFloat(record.rhr) > 100 : false;
+
+  return { perfScore, structScore, cardioScore, perfScores, rhrScore, bpScore, bpFlag, rhrFlag };
 }
 
 function scoreColor(score) {
@@ -1162,7 +1263,7 @@ function buildPSSCard(c) {
     function colCard(s){if(!s.pss)return '<div style="padding:.6rem;border:1px solid var(--border);border-radius:8px;background:var(--black-4);text-align:center"><div style="font-size:9px;color:var(--dim)">'+s.label+'<br>No data yet</div></div>';return '<div style="padding:.6rem;border:1px solid var(--border);border-radius:8px;background:var(--black-4)"><div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:.5rem;text-align:center">'+s.label+(s.date?'<div style="font-weight:400;text-transform:none;letter-spacing:0;font-size:8px;margin-top:1px">'+new Date(s.date).toLocaleDateString()+'</div>':'')+'</div><div style="display:flex;gap:6px;justify-content:center">'+gauge(s.pss.perfScore,'Performance')+gauge(s.pss.structScore,'Structure')+'</div>'+(s.pss.perfScore!==null?'<div style="margin-top:.5rem;padding-top:.5rem;border-top:1px solid var(--border)">'+[{label:'KB DL',val:s.pss.perfScores.kbdl},{label:'Push-Ups',val:s.pss.perfScores.pushups},{label:'500m Row',val:s.pss.perfScores.row},{label:'Plank',val:s.pss.perfScores.plank}].filter(x=>x.val!==null).map(x=>'<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px"><div style="font-size:8px;color:var(--dim-2);min-width:50px">'+x.label+'</div><div style="flex:1;height:4px;background:var(--black-2);border-radius:2px"><div style="width:'+(x.val/10*100)+'%;height:100%;background:'+scoreColor(x.val)+';border-radius:2px"></div></div><div style="font-size:8px;font-weight:700;color:'+scoreColor(x.val)+';min-width:14px;text-align:right">'+x.val+'</div></div>').join('')+'</div>':'')+'</div>';}
     let changeHtml='';
     if(intake.pss&&latest&&latest.cp!=='intake'){const pd=latest.pss.perfScore!==null&&intake.pss.perfScore!==null?(latest.pss.perfScore-intake.pss.perfScore).toFixed(1):null;const sd=latest.pss.structScore!==null&&intake.pss.structScore!==null?(latest.pss.structScore-intake.pss.structScore).toFixed(1):null;if(pd||sd)changeHtml='<div style="display:flex;gap:12px;margin-bottom:.75rem;padding:.5rem .75rem;background:var(--black-4);border-radius:8px;border:1px solid var(--border);align-items:center"><div style="font-size:10px;color:var(--dim-2);font-weight:600">Since Intake:</div>'+(pd?'<div style="font-size:10px;font-weight:700;color:'+(parseFloat(pd)>0?'var(--green-br)':'var(--red)')+'">Performance '+(parseFloat(pd)>0?'+':'')+pd+'</div>':'')+(sd?'<div style="font-size:10px;font-weight:700;color:'+(parseFloat(sd)>0?'var(--green-br)':'var(--red)')+'">Structure '+(parseFloat(sd)>0?'+':'')+sd+'</div>':'')+'</div>';}
-    return '<div class="card"><div class="card-title" style="display:flex;justify-content:space-between;align-items:center">Performance Scoring System<span style="font-size:9px;color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0">Auto-calculated from measurements</span></div>'+changeHtml+'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:.75rem">'+scores.map(colCard).join('')+'</div><div style="padding:.5rem .75rem;background:rgba(201,162,39,.05);border:1px solid rgba(201,162,39,.1);border-radius:8px;font-size:10px;color:var(--dim-2)"><span style="color:var(--gold);font-weight:700">Function Score</span> — Pending movement screen integration.</div></div>';
+    return '<div class="card"><div class="card-title" style="display:flex;justify-content:space-between;align-items:center">Performance Scoring System<span style="font-size:9px;color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0">Auto-calculated from measurements</span></div>'+changeHtml+'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:.75rem">'+scores.map(colCard).join('')+'</div>'+(scores.some(s=>s.pss?.cardioScore!==null)?'<div style="padding:.6rem .75rem;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.15);border-radius:8px;margin-bottom:.5rem"><div style="font-size:9px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#60a5fa;margin-bottom:4px">Cardiovascular Score</div><div style="display:flex;gap:12px">'+scores.filter(s=>s.pss).map(s=>`<div style="text-align:center"><div style="font-family:Bebas Neue,sans-serif;font-size:20px;color:${s.pss.cardioScore>=8?'var(--green-br)':s.pss.cardioScore>=6?'var(--gold)':'var(--red)'}">${s.pss.cardioScore!==null?s.pss.cardioScore:'—'}</div><div style="font-size:8px;color:var(--dim)">${s.label}</div></div>`).join('')+'</div>'+(scores.some(s=>s.pss?.bpFlag||s.pss?.rhrFlag)?'<div style="font-size:10px;font-weight:700;color:var(--red);margin-top:6px">⚠ Cardiovascular flag detected — review with client</div>':'')+'</div>':'')+'<div style="padding:.5rem .75rem;background:rgba(201,162,39,.05);border:1px solid rgba(201,162,39,.1);border-radius:8px;font-size:10px;color:var(--dim-2)"><span style="color:var(--gold);font-weight:700">Function Score</span> — Pending movement screen integration.</div></div>';
   } catch(e) { console.error('PSS error:',e); return '<div class="card"><div class="card-title">Performance Scoring System</div><div style="font-size:11px;color:var(--dim)">Record intake measurements to see scores.</div></div>'; }
 }
 
@@ -1299,6 +1400,36 @@ function renderDashboard() {
   });
 
   let alertHtml = '<div id="dashAlert">';
+
+  // Cardiovascular flags — highest priority alert
+  const cardioFlags = clients.filter(c => {
+    if (c.status === 'inactive') return false;
+    const m = c.measurements || {};
+    const latest = m.week8 || m.week4 || m.intake;
+    if (!latest) return false;
+    const pss = calcPSS(latest, c.gender);
+    return pss && (pss.bpFlag || pss.rhrFlag);
+  });
+
+  if (cardioFlags.length > 0) {
+    alertHtml += `
+    <div style="background:rgba(220,38,38,.08);border:2px solid rgba(220,38,38,.4);border-radius:14px;padding:1rem 1.25rem;margin-bottom:1rem">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--red);margin-bottom:.5rem">
+        🚨 Cardiovascular Flag — ${cardioFlags.length} client${cardioFlags.length!==1?'s':''}
+      </div>
+      <div style="font-size:11px;color:var(--dim);margin-bottom:.75rem">Resting HR above 100 BPM or Stage 2 hypertension detected. Review with client and consider physician referral.</div>
+      ${cardioFlags.map(c => {
+        const latest = c.measurements?.week8 || c.measurements?.week4 || c.measurements?.intake;
+        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.5rem 0;border-bottom:1px solid rgba(220,38,38,.15)">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--white)">${c.name}</div>
+            <div style="font-size:11px;color:var(--red)">${latest?.rhr ? 'RHR: ' + latest.rhr + ' BPM' : ''} ${latest?.bp ? '· BP: ' + latest.bp : ''}</div>
+          </div>
+          <button class="btn sm" style="background:rgba(220,38,38,.1);color:var(--red);border-color:rgba(220,38,38,.2);white-space:nowrap" onclick="nav('profile','${c.id}')">View Profile</button>
+        </div>`;
+      }).join('')}
+    </div>`
+  }
 
   // Incomplete intake section
   if (incompleteIntake.length > 0) {
@@ -1535,7 +1666,6 @@ function renderProfile(clientId) {
       </div>
       <div class="btn-row">
         <button class="btn sm" onclick="editClient('${c.id}')">Edit</button>
-        <button class="btn sm gold" onclick="printBlankLog()">🖨 Print Log</button>
         <button class="btn sm green" onclick="printProgressReport('${c.id}')">📊 Report</button>
         <button class="btn sm" style="background:rgba(59,130,246,.1);color:var(--blue);border-color:rgba(59,130,246,.25)" onclick="exportClient('${c.id}')">📤 Export Client</button>
         ${c.status==='inactive'?`<span style="font-size:10px;color:var(--red);font-weight:700;padding:4px 8px;background:rgba(220,38,38,.1);border-radius:6px;border:1px solid rgba(220,38,38,.2)">INACTIVE — Wk ${c.dropoutWeek||'?'}</span>`:`<button class="btn sm" style="background:rgba(220,38,38,.1);color:var(--red);border-color:rgba(220,38,38,.2)" onclick="markInactive('${c.id}')">Mark Inactive</button>`}
@@ -1671,13 +1801,21 @@ function renderProfile(clientId) {
       <div id="genActions" class="btn-row" style="display:none;margin-top:.75rem">
         <button class="btn green" id="copyProgramBtn" onclick="copyProgram()">Copy Program</button>
         <button class="btn" onclick="saveProgramToClient()">Save to Profile</button>
-        <button class="btn gold" onclick="printBlankLog()">🖨 Print Log</button>
         <button class="btn" onclick="printProg()">Program PDF</button>
         <button class="btn" onclick="printProgressReport()">📊 Progress Report</button>
       </div>
       <div id="genStart" class="btn-row">
         <button class="btn gold full" onclick="buildBlock1()">BUILD 8-WEEK PROGRAM →</button>
       </div>
+    </div>
+
+    <!-- TRENDS -->
+    <div class="card" id="trendsCard-${c.id}">
+      <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+        Client Trends
+        <span style="font-size:9px;color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0">${(c.weeklyData||[]).length} week${(c.weeklyData||[]).length!==1?'s':''} of data</span>
+      </div>
+      ${buildTrendsSection(c)}
     </div>
 
     <!-- PROGRAM HISTORY -->
@@ -1722,6 +1860,8 @@ const MEASURE_FIELDS = [
   {key:'rarm',   label:'R Arm',         unit:'in',  lowerBetter:false, calculated:false},
   {key:'lthigh', label:'L Thigh',       unit:'in',  lowerBetter:false, calculated:false},
   {key:'rthigh', label:'R Thigh',       unit:'in',  lowerBetter:false, calculated:false},
+  {key:'rhr',    label:'Resting Heart Rate', unit:'BPM', lowerBetter:true, calculated:false},
+  {key:'bp',     label:'Blood Pressure', unit:'mmHg', lowerBetter:true, calculated:false},
   {key:'kbdl',   label:'KB Deadlift',   unit:'reps',lowerBetter:false, calculated:false},
   {key:'pushups',label:'Push-Ups',      unit:'reps',lowerBetter:false, calculated:false},
   {key:'putype', label:'Push-Up Type',  unit:'',    lowerBetter:false, calculated:false},
@@ -1771,6 +1911,10 @@ function openMeasure(clientId, checkpoint) {
               <div class="form-label">${f.label}${f.unit?' ('+f.unit+')':''}</div>
               ${f.key==='kbdl'
                 ? `<input type="number" id="mf-${f.key}" value="${existing[f.key]||''}" placeholder="Reps in 60s · 24kg KB (M) / 16kg KB (F)">`
+                : f.key==='rhr'
+                ? `<input type="number" id="mf-${f.key}" value="${existing[f.key]||''}" placeholder="e.g. 68 — measure resting, before getting up">`
+                : f.key==='bp'
+                ? `<input type="text" id="mf-${f.key}" value="${existing[f.key]||''}" placeholder="e.g. 122/80 — systolic/diastolic">`
                 : `<input type="text" id="mf-${f.key}" value="${existing[f.key]||''}" placeholder="—">`
               }
             </div>`).join('')}
@@ -2376,7 +2520,8 @@ function exportClient(clientId) {
       block1:p.block1||"", block2:p.block2||"", block1Only:p.block1Only||false
     }; }),
     activeProgramId: c.activeProgramId||null,
-    sessionNotes:[], weeklyData:[], status:"active"
+    sessionNotes:[], weeklyData:[], status:"active",
+    nrKey: getNRKey()||""
   };
 
   var profileJson = JSON.stringify(profileData);
@@ -2475,7 +2620,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/MRS_Client_Portal.html?client=' + c.id,
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id,
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -2487,101 +2632,335 @@ function exportClientFile(clientId) {
   toast(c.name + ' file exported 📁');
 }
 
+// ══════════════════════════════════════════════════════════════════
+// CLIENT TRENDS — weekly data visualization
+// ══════════════════════════════════════════════════════════════════
+function buildTrendsSection(c) {
+  const weeks = (c.weeklyData || []).sort((a, b) => a.weekKey > b.weekKey ? 1 : -1);
+  const m = c.measurements || {};
+
+  if (!weeks.length && !m.intake) {
+    return '<div class="empty" style="padding:1rem"><div class="empty-text">No trend data yet.<br>Upload weekly files via Client Weeks to see trends.</div></div>';
+  }
+
+  // ── 8-WEEK OUTCOME SUMMARY ─────────────────────────────────────
+  function outcomeSummary() {
+    const intake = m.intake || {};
+    const latest = m.week8 || m.week4 || {};
+    const checkpoint = m.week8 ? 'Week 8' : m.week4 ? 'Week 4' : null;
+    if (!checkpoint || !Object.keys(intake).length) return '';
+
+    const metrics = [
+      {key:'rhr',    label:'Resting HR',    unit:'BPM', lower:true},
+      {key:'bp',     label:'Blood Pressure', unit:'',   lower:true,  bpSpecial:true},
+      {key:'bodyfat',label:'Body Fat',       unit:'%',  lower:true},
+      {key:'whr',    label:'WHR',            unit:'',   lower:true},
+      {key:'kbdl',   label:'KB Deadlift',   unit:'reps',lower:false},
+      {key:'pushups',label:'Push-Ups',       unit:'reps',lower:false},
+    ];
+
+    function pctChange(from, to, lower) {
+      const a = parseFloat(from), b = parseFloat(to);
+      if (isNaN(a) || isNaN(b) || a === 0) return null;
+      const p = ((b - a) / a * 100);
+      const good = lower ? p < 0 : p > 0;
+      return {text:(p>0?'+':'')+p.toFixed(1)+'%', good, big:Math.abs(p)>=10};
+    }
+
+    const rows = metrics.map(met => {
+      const iv = intake[met.key], lv = latest[met.key];
+      if (!iv && !lv) return '';
+      let changeHtml = '';
+      if (iv && lv && !met.bpSpecial) {
+        const ch = pctChange(iv, lv, met.lower);
+        if (ch) {
+          const col = ch.good ? (ch.big ? 'var(--gold)' : 'var(--green-br)') : 'var(--red)';
+          changeHtml = `<span style="font-weight:700;color:${col};font-size:10px">${ch.text}</span>`;
+        }
+      } else if (met.bpSpecial && iv && lv) {
+        // Just show direction for BP
+        const sysI = parseFloat((iv||'').split('/')[0]);
+        const sysL = parseFloat((lv||'').split('/')[0]);
+        if (!isNaN(sysI) && !isNaN(sysL)) {
+          const diff = sysL - sysI;
+          const good = diff < 0;
+          changeHtml = `<span style="font-weight:700;color:${good?'var(--green-br)':'var(--red)'};font-size:10px">${diff>0?'+':''}${diff.toFixed(0)} sys</span>`;
+        }
+      }
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--dim-2);min-width:80px">${met.label}</div>
+        <div style="font-size:11px;color:var(--dim);min-width:50px">${iv||'—'} ${met.unit}</div>
+        <div style="font-size:11px;font-weight:700;color:var(--white);min-width:50px">${lv||'—'} ${met.unit}</div>
+        <div style="min-width:50px;text-align:right">${changeHtml}</div>
+      </div>`;
+    }).filter(Boolean).join('');
+
+    if (!rows) return '';
+
+    return `<div style="margin-bottom:1rem">
+      <div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin-bottom:8px">8-Week Outcome Summary</div>
+      <div style="display:flex;justify-content:space-between;font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);padding-bottom:4px;border-bottom:1px solid var(--border);margin-bottom:2px">
+        <span>Metric</span><span>Intake</span><span>${checkpoint}</span><span>Change</span>
+      </div>
+      ${rows}
+    </div>`;
+  }
+
+  // ── MINI LINE CHART (SVG) ──────────────────────────────────────
+  function miniChart(label, dataPoints, color, unit, lowerBetter, thresholds) {
+    if (!dataPoints.length) return '';
+    const vals = dataPoints.map(d => d.val).filter(v => v !== null && !isNaN(v));
+    if (!vals.length) return '';
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const range = max - min || 1;
+    const W = 260, H = 50, PAD = 6;
+    const xStep = dataPoints.length > 1 ? (W - PAD*2) / (dataPoints.length - 1) : 0;
+
+    const points = dataPoints.map((d, i) => {
+      if (d.val === null || isNaN(d.val)) return null;
+      const x = PAD + i * xStep;
+      const y = H - PAD - ((d.val - min) / range) * (H - PAD*2);
+      return {x, y, val:d.val, label:d.label};
+    }).filter(Boolean);
+
+    if (points.length < 1) return '';
+
+    const polyline = points.map(p => `${p.x},${p.y}`).join(' ');
+    const latest = points[points.length-1];
+    const first = points[0];
+    const trend = latest.val - first.val;
+    const trendGood = lowerBetter ? trend < 0 : trend > 0;
+    const trendColor = points.length > 1 ? (trendGood ? 'var(--green-br)' : 'var(--red)') : 'var(--dim)';
+
+    // Threshold lines
+    let thresholdLines = '';
+    if (thresholds) {
+      thresholds.forEach(t => {
+        const ty = H - PAD - ((t.val - min) / range) * (H - PAD*2);
+        if (ty > 0 && ty < H) {
+          thresholdLines += `<line x1="${PAD}" y1="${ty}" x2="${W-PAD}" y2="${ty}" stroke="${t.color}" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>`;
+          thresholdLines += `<text x="${W-PAD+2}" y="${ty+3}" font-size="7" fill="${t.color}" opacity="0.7">${t.label}</text>`;
+        }
+      });
+    }
+
+    return `<div style="margin-bottom:.75rem">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
+        <div style="font-size:10px;font-weight:700;color:var(--dim-2);font-family:Barlow Condensed,sans-serif;letter-spacing:.08em;text-transform:uppercase">${label}</div>
+        <div style="font-size:11px;font-weight:700;color:${trendColor}">${latest.val}${unit}${points.length > 1 ? ' <span style="font-size:9px">'+(trend>0?'↑':'↓')+Math.abs(trend).toFixed(trend%1===0?0:1)+'</span>' : ''}</div>
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;overflow:visible">
+        ${thresholdLines}
+        <polyline points="${polyline}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        ${points.map(p => `<circle cx="${p.x}" cy="${p.y}" r="3" fill="${color}"/>`).join('')}
+        ${points.map(p => `<text x="${p.x}" y="${p.y-6}" text-anchor="middle" font-size="8" fill="var(--dim)">${p.val}${unit}</text>`).join('')}
+      </svg>
+      <div style="display:flex;justify-content:space-between;margin-top:-4px">
+        ${dataPoints.map(d => `<div style="font-size:8px;color:var(--dim);text-align:center">${d.label}</div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  // ── BUILD SECTION ──────────────────────────────────────────────
+  let html = outcomeSummary();
+
+  if (!weeks.length) {
+    html += '<div style="font-size:11px;color:var(--dim);font-style:italic;padding:.5rem 0">Upload weekly files to see trend charts.</div>';
+    return html;
+  }
+
+  // WEEKLY SCORE TREND
+  const scorePts = weeks.map(w => ({val:w.weekScore||0, label:'W'+w.weekKey.slice(-2).replace('-','')}));
+  html += '<div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;margin-top:.5rem">Coaching Charts</div>';
+  html += miniChart('Weekly Score (out of 49)', scorePts, 'var(--gold)', '', false, [{val:35, color:'var(--green-br)', label:'35'}]);
+
+  // PROTEIN HIT RATE
+  const proteinPts = weeks.map(w => {
+    const checkins = Object.values(w.checkins||{}).filter(Boolean);
+    const hits = checkins.filter(c => c?.protein === true).length;
+    const days = checkins.length || 1;
+    return {val: Math.round(hits/days*100), label:'W'+w.weekKey.slice(-2).replace('-','')};
+  });
+  html += miniChart('Protein Hit Rate (%)', proteinPts, '#f97316', '%', false, [{val:70, color:'var(--green-br)', label:'70%'}]);
+
+  // NUTRIREADER AVERAGE
+  const nutriPts = weeks.map(w => ({
+    val: w.avgNutriScore || null,
+    label: 'W'+w.weekKey.slice(-2).replace('-','')
+  })).filter(p => p.val !== null);
+  if (nutriPts.length) {
+    html += miniChart('NutriReader Avg Score', nutriPts, 'var(--green-br)', '/10', false, [{val:7, color:'var(--gold)', label:'7'}]);
+  }
+
+  // WELLNESS TREND — energy vs stress
+  const energyPts = weeks.map(w => {
+    const checkins = Object.values(w.checkins||{}).filter(c => c?.energy);
+    const avg = checkins.length ? Math.round(checkins.reduce((s,c)=>s+(c.energy||5),0)/checkins.length) : null;
+    return {val:avg, label:'W'+w.weekKey.slice(-2).replace('-','')};
+  }).filter(p=>p.val!==null);
+  if (energyPts.length) {
+    html += miniChart('Avg Energy Score', energyPts, '#60a5fa', '/10', false, [{val:7, color:'var(--gold)', label:'7'}]);
+  }
+
+  // PROGRESSIVE OVERLOAD — top set per slot across weeks
+  const slotColors = {A:'var(--gold)',B:'#f97316',C:'#60a5fa',D:'var(--green-br)',E:'#a855f7',F:'#ec4899'};
+  let slotHtml = '';
+  ['A','B','C','D','E','F'].forEach(letter => {
+    const slotPts = [];
+    weeks.forEach(w => {
+      const logs = w.slotLogs || {};
+      let found = null;
+      Object.entries(logs).forEach(([sessId, slots]) => {
+        Object.entries(slots).forEach(([key, log]) => {
+          if (key.startsWith(letter) && log.weight && !isNaN(parseFloat(log.weight))) {
+            if (!found || parseFloat(log.weight) > parseFloat(found.weight)) found = log;
+          }
+        });
+      });
+      slotPts.push({val: found ? parseFloat(found.weight) : null, label:'W'+w.weekKey.slice(-2).replace('-','')});
+    });
+    const validPts = slotPts.filter(p => p.val !== null);
+    if (validPts.length >= 2) {
+      slotHtml += miniChart(`Slot ${letter} — Top Set Weight`, slotPts, slotColors[letter]||'var(--gold)', ' lbs', false, []);
+    }
+  });
+
+  if (slotHtml) {
+    html += `<div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;margin-top:.75rem">Progressive Overload</div>`;
+    html += slotHtml;
+  }
+
+  // BRIDGE DATA CHARTS
+  html += `<div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;margin-top:.75rem">Bridge Data</div>`;
+
+  // Cardiovascular from measurements
+  const cardioDataRHR = [
+    m.intake?.rhr ? {val:parseFloat(m.intake.rhr), label:'Intake'} : null,
+    m.week4?.rhr ? {val:parseFloat(m.week4.rhr), label:'Wk 4'} : null,
+    m.week8?.rhr ? {val:parseFloat(m.week8.rhr), label:'Wk 8'} : null,
+  ].filter(Boolean);
+  if (cardioDataRHR.length >= 2) {
+    html += miniChart('Resting Heart Rate (BPM)', cardioDataRHR, '#f97316', '', true, [
+      {val:60, color:'var(--green-br)', label:'60 athlete'},
+      {val:80, color:'var(--gold)', label:'80 avg'},
+      {val:100, color:'var(--red)', label:'100 flag'},
+    ]);
+  }
+
+  // Body fat trend
+  const bfData = [
+    m.intake?.bodyfat ? {val:parseFloat(m.intake.bodyfat), label:'Intake'} : null,
+    m.week4?.bodyfat ? {val:parseFloat(m.week4.bodyfat), label:'Wk 4'} : null,
+    m.week8?.bodyfat ? {val:parseFloat(m.week8.bodyfat), label:'Wk 8'} : null,
+  ].filter(Boolean);
+  if (bfData.length >= 2) html += miniChart('Body Fat %', bfData, 'var(--red)', '%', true, []);
+
+  // WHR trend
+  const whrData = [
+    m.intake?.whr ? {val:parseFloat(m.intake.whr), label:'Intake'} : null,
+    m.week4?.whr ? {val:parseFloat(m.week4.whr), label:'Wk 4'} : null,
+    m.week8?.whr ? {val:parseFloat(m.week8.whr), label:'Wk 8'} : null,
+  ].filter(Boolean);
+  if (whrData.length >= 2) {
+    html += miniChart('Waist-to-Hip Ratio', whrData, '#a855f7', '', true, [
+      {val:0.80, color:'var(--gold)', label:'0.80 F risk'},
+      {val:0.90, color:'var(--red)', label:'0.90 M risk'},
+    ]);
+  }
+
+  // Adherence — weekly scores as % of 49
+  const adherencePts = weeks.map(w => ({
+    val: Math.round((w.weekScore||0)/49*100),
+    label: 'W'+w.weekKey.slice(-2).replace('-','')
+  }));
+  if (adherencePts.length >= 2) {
+    html += miniChart('Behavioral Adherence (%)', adherencePts, 'var(--green-br)', '%', false, [
+      {val:70, color:'var(--gold)', label:'70%'},
+    ]);
+  }
+
+  // Functional capacity — fitness benchmarks table if both intake and latest
+  const fc = [
+    {key:'kbdl', label:'KB Deadlift'},
+    {key:'pushups', label:'Push-Ups'},
+    {key:'plank', label:'Plank'},
+    {key:'row', label:'500m Row'},
+  ];
+  const fcIntake = m.intake || {};
+  const fcLatest = m.week8 || m.week4 || {};
+  const fcRows = fc.map(f => {
+    const iv = fcIntake[f.key], lv = fcLatest[f.key];
+    if (!iv && !lv) return '';
+    const change = iv && lv ? parseFloat(lv) - parseFloat(iv) : null;
+    const col = change !== null ? (change > 0 ? 'var(--green-br)' : 'var(--red)') : 'var(--dim)';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:10px;color:var(--dim-2);min-width:80px">${f.label}</div>
+      <div style="flex:1;height:6px;background:var(--black-2);border-radius:3px;overflow:hidden">
+        ${iv&&lv?`<div style="width:${Math.min(100,parseFloat(lv)/parseFloat(iv)*100)}%;height:100%;background:var(--gold);border-radius:3px"></div>`:''}
+      </div>
+      <div style="font-size:10px;color:var(--dim);min-width:24px">${iv||'—'}</div>
+      <div style="font-size:10px;font-weight:700;color:var(--white);min-width:24px">${lv||'—'}</div>
+      ${change!==null?`<div style="font-size:9px;font-weight:700;color:${col};min-width:28px;text-align:right">${change>0?'+':''}${change}</div>`:'<div style="min-width:28px"></div>'}
+    </div>`;
+  }).filter(Boolean).join('');
+
+  if (fcRows) {
+    html += `<div style="margin-bottom:.75rem">
+      <div style="font-size:10px;font-weight:700;color:var(--dim-2);font-family:Barlow Condensed,sans-serif;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px">Functional Capacity Index</div>
+      <div style="display:flex;justify-content:flex-end;gap:24px;font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:2px"><span>Intake</span><span>Now</span><span>Δ</span></div>
+      ${fcRows}
+    </div>`;
+  }
+
+  return html || '<div style="font-size:11px;color:var(--dim)">Record measurements and upload weekly files to see trends.</div>';
+}
+
 function editClient(clientId) {
   const data = db();
   const c = data.clients.find(x => x.id === clientId);
   if (!c) return;
 
-  // Build edit modal inline
-  const flagsList = ['Low Back','Shoulder','Knee','Hip Mobility','Thoracic','Foot / Ankle'];
   const avatars = ['Comeback','Workhorse','Built Different','OG','Builder','Apex'];
-  const avIcons = {Comeback:'🟣',Workhorse:'🔴','Built Different':'🍑',OG:'🟡',Builder:'⚫',Apex:'⚡'};
+  const flags   = ['Knee','Shoulder','Back','Hip','Ankle','Wrist','No Restrictions'];
+  const freqs   = ['2x/week','3x/week','4x/week','5x/week'];
+  const levels  = ['Beginner','Intermediate','Advanced','Athlete'];
+  const goals   = ['Fat Loss','Muscle Gain','Strength','Athletic Performance','General Health','Body Recomposition'];
 
-  const avatarPicksHTML = avatars.map(function(a) {
-    return '<div class="avatar-pick ' + (c.avatar===a?'selected':'') + '" data-av="' + a + '" onclick="var m=document.querySelectorAll(String.fromCharCode(35)+' + "'measureModal .avatar-pick'" + ');Array.from(m).forEach(function(x){x.classList.remove(' + "'selected'" + ')});this.classList.add(' + "'selected'" + ')">' +
-    '<span class="ap-icon">' + avIcons[a] + '</span><span class="ap-name">' + a + '</span></div>';
-  }).join('');
+  document.getElementById('measureModal').innerHTML =
+    '<div style="position:relative;display:flex;flex-direction:column;max-height:88vh;overflow:hidden;border-radius:18px">'
+    + '<div style="padding:1.1rem 1.25rem .75rem;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">'
+    + '<div class="modal-title" style="margin-bottom:0">Edit Profile</div>'
+    + '<button class="modal-close" onclick="document.getElementById(\'measureModal\').classList.remove(\'active\')" style="font-size:24px;padding:4px 8px">×</button>'
+    + '</div>'
+    + '<div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain;touch-action:pan-y">'
+    + '<div class="form-field"><div class="form-label">Name</div><input id="edit-name" class="form-input" value="' + (c.name||'') + '"></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
+    + '<div class="form-field"><div class="form-label">Age</div><input id="edit-age" class="form-input" type="number" value="' + (c.age||'') + '"></div>'
+    + '<div class="form-field"><div class="form-label">Gender</div><select id="edit-gender" class="form-input"><option value="M"' + (c.gender==='M'?' selected':'') + '>Male</option><option value="F"' + (c.gender==='F'?' selected':'') + '>Female</option></select></div>'
+    + '</div>'
+    + '<div class="form-field"><div class="form-label">Frequency</div><select id="edit-freq" class="form-input">'
+    + freqs.map(f => '<option value="' + f + '"' + (c.freq===f?' selected':'') + '>' + f + '</option>').join('')
+    + '</select></div>'
+    + '<div class="form-field"><div class="form-label">Level</div><select id="edit-level" class="form-input">'
+    + levels.map(l => '<option value="' + l + '"' + (c.level===l?' selected':'') + '>' + l + '</option>').join('')
+    + '</select></div>'
+    + '<div class="form-field"><div class="form-label">Goal</div><select id="edit-goal" class="form-input">'
+    + goals.map(g => '<option value="' + g + '"' + (c.goal===g?' selected':'') + '>' + g + '</option>').join('')
+    + '</select></div>'
+    + '<div class="form-field"><div class="form-label">Avatar</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">'
+    + avatars.map(av => '<div class="avatar-pick' + (c.avatar===av?' selected':'') + '" data-av="' + av + '" onclick="this.parentNode.querySelectorAll(\'.avatar-pick\').forEach(function(x){x.classList.remove(\'selected\')});this.classList.add(\'selected\')" style="padding:6px 12px;border-radius:8px;border:1px solid var(--border-2);cursor:pointer;font-size:11px;font-weight:700;background:' + (c.avatar===av?'var(--gold-glow)':'var(--black-4)') + ';color:' + (c.avatar===av?'var(--gold)':'var(--dim-2)') + '">' + av + '</div>').join('')
+    + '</div></div>'
+    + '<div class="form-field"><div class="form-label">Health Flags</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">'
+    + flags.map(fl => '<div class="flag-chip' + ((c.flags||[]).includes(fl)?' on':'') + '" data-flag="' + fl + '" onclick="this.classList.toggle(\'on\')" style="padding:5px 10px;border-radius:6px;border:1px solid var(--border-2);cursor:pointer;font-size:11px;font-weight:700;background:' + ((c.flags||[]).includes(fl)?'rgba(220,38,38,.12)':'var(--black-4)') + ';color:' + ((c.flags||[]).includes(fl)?'var(--red)':'var(--dim-2)') + '">' + fl + '</div>').join('')
+    + '</div></div>'
+    + '<div class="form-field"><div class="form-label">Notes</div><textarea id="edit-notes" class="form-input" rows="3" style="resize:vertical">' + (c.notes||'') + '</textarea></div>'
+    + '<button onclick="saveEditClient(\'' + clientId + '\')" style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer;margin-top:8px">Save Changes</button>'
+    + '</div></div>';
 
-  document.getElementById('measureModal').innerHTML = `
-    <div style="position:relative;display:flex;flex-direction:column;max-height:88vh;overflow:hidden;border-radius:18px">
-      <div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain;touch-action:pan-y">
-        <button class="modal-close" onclick="document.getElementById('measureModal').classList.remove('active')">×</button>
-    <div class="modal-title">Edit — ${c.name}</div>
-
-    <div class="form-grid" style="margin-bottom:1rem">
-      <div class="form-field">
-        <div class="form-label">Name</div>
-        <input type="text" id="edit-name" value="${c.name}">
-      </div>
-      <div class="form-field">
-        <div class="form-label">Age</div>
-        <input type="number" id="edit-age" value="${c.age||''}" min="16" max="100">
-      </div>
-      <div class="form-field">
-        <div class="form-label">Gender</div>
-        <select id="edit-gender">
-          <option value="M" ${(c.gender||'M')==='M'?'selected':''}>Male</option>
-          <option value="F" ${c.gender==='F'?'selected':''}>Female</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="section-div" style="margin-bottom:.6rem">Avatar</div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:1rem">
-      ${avatarPicksHTML}
-    </div>
-
-    <div class="three-col" style="margin-bottom:1rem">
-      <div class="form-field">
-        <div class="form-label">Frequency</div>
-        <select id="edit-freq">
-          <option ${c.freq==='2x/week'?'selected':''}>2x/week</option>
-          <option ${c.freq==='3x/week'?'selected':''}>3x/week</option>
-          <option ${c.freq==='4x/week'?'selected':''}>4x/week</option>
-        </select>
-      </div>
-      <div class="form-field">
-        <div class="form-label">Level</div>
-        <select id="edit-level">
-          <option ${c.level==='Beginner'?'selected':''}>Beginner</option>
-          <option ${c.level==='Intermediate'?'selected':''}>Intermediate</option>
-          <option ${c.level==='Advanced'?'selected':''}>Advanced</option>
-        </select>
-      </div>
-      <div class="form-field">
-        <div class="form-label">Goal</div>
-        <select id="edit-goal">
-          <option ${c.goal==='Fat Loss'?'selected':''}>Fat Loss</option>
-          <option ${c.goal==='Body Recomposition'?'selected':''}>Body Recomposition</option>
-          <option ${c.goal==='Strength + Muscle'?'selected':''}>Strength + Muscle</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="section-div" style="margin-bottom:.6rem">Injury Flags</div>
-    <div class="flag-row" style="margin-bottom:1rem">
-      ${flagsList.map(f => `
-        <div class="flag-chip ${(c.flags||[]).includes(f)?'on':''}" data-flag="${f}"
-          onclick="this.classList.toggle('on')">
-          <div class="flag-box">✓</div>
-          <span class="flag-text">${f}</span>
-        </div>`).join('')}
-    </div>
-
-    <div class="form-field" style="margin-bottom:1rem">
-      <div class="form-label">Intake Notes</div>
-      <textarea id="edit-notes" rows="2" style="resize:vertical">${c.notes||''}</textarea>
-    </div>
-      </div>
-      <div style="padding:.75rem 1.5rem 1.1rem;border-top:1px solid var(--border);flex-shrink:0">
-        <div class="btn-row">
-      <button class="btn gold" onclick="saveEditClient('${clientId}')">Save Changes</button>
-      <button class="btn" onclick="document.getElementById('measureModal').classList.remove('active')">Cancel</button>
-    </div>
-      </div>
-    </div>`;
   document.getElementById('measureModal').classList.add('active');
 }
+
 
 function saveEditClient(clientId) {
   const data = db();
@@ -2854,6 +3233,8 @@ function printProgressReport(clientId) {
     {key:'whr',    label:'Waist-Hip Ratio',  unit:'',    lowerBetter:true },
     {key:'smm',    label:'Muscle Mass (SMM)',unit:'lbs', lowerBetter:false},
     {key:'bodyfat',label:'Body Fat',         unit:'%',   lowerBetter:true },
+    {key:'rhr',    label:'Resting Heart Rate',unit:'BPM',lowerBetter:true },
+    {key:'bp',     label:'Blood Pressure',   unit:'',    lowerBetter:true },
     {key:'kbdl',   label:'KB Deadlift',      unit:'reps',lowerBetter:false},
     {key:'pushups',label:'Push-Ups',         unit:'reps',lowerBetter:false},
     {key:'row',    label:'500m Row',         unit:'sec', lowerBetter:true },
@@ -3161,6 +3542,74 @@ function printProgressReport(clientId) {
     + ringAndPathSection
 
     // Compliance
+    // Cardiovascular section
+    +(function(){
+      const rhrI  = em.intake?.rhr;
+      const rhrW4 = em.week4?.rhr;
+      const rhrW8 = em.week8?.rhr;
+      const bpI   = em.intake?.bp;
+      const bpW4  = em.week4?.bp;
+      const bpW8  = em.week8?.bp;
+      const hasCardio = rhrI || rhrW4 || rhrW8 || bpI || bpW4 || bpW8;
+      if (!hasCardio) return '';
+
+      // RHR classification
+      function rhrClass(bpm) {
+        if (!bpm) return null;
+        const r = parseFloat(bpm);
+        if (r <= 60) return {label:'Athletic', color:'#1a7a4a'};
+        if (r <= 70) return {label:'Good', color:'#1a7a4a'};
+        if (r <= 80) return {label:'Average', color:'#c9a227'};
+        if (r <= 90) return {label:'Above Average Risk', color:'#f97316'};
+        return {label:'Needs Attention', color:'#dc2626'};
+      }
+
+      // BP classification
+      function bpClass(bp) {
+        if (!bp) return null;
+        const parts = bp.split('/');
+        if (parts.length !== 2) return null;
+        const sys = parseFloat(parts[0]), dia = parseFloat(parts[1]);
+        if (sys < 120 && dia < 80) return {label:'Normal', color:'#1a7a4a'};
+        if (sys < 130 && dia < 80) return {label:'Elevated', color:'#c9a227'};
+        if (sys < 140 || dia < 90) return {label:'Stage 1 HTN', color:'#f97316'};
+        return {label:'Stage 2 HTN — Refer to physician', color:'#dc2626'};
+      }
+
+      const latestRHR = rhrW8 || rhrW4 || rhrI;
+      const latestBP = bpW8 || bpW4 || bpI;
+      const rhrCls = rhrClass(latestRHR);
+      const bpCls = bpClass(latestBP);
+
+      // RHR change
+      let rhrChange = '';
+      if (rhrI && latestRHR && rhrI !== latestRHR) {
+        const diff = parseFloat(latestRHR) - parseFloat(rhrI);
+        const good = diff < 0;
+        rhrChange = `<span style="font-weight:800;color:${good?'#1a7a4a':'#dc2626'}">${diff > 0 ? '+' : ''}${diff.toFixed(0)} BPM</span>`;
+      }
+
+      return '<div class="section-title">CARDIOVASCULAR HEALTH</div>'
+        + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:24px">'
+        // RHR card
+        + '<div style="background:#f8f7f3;border-radius:10px;padding:14px 16px;border:1px solid #e8e5db">'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#888;margin-bottom:6px">Resting Heart Rate</div>'
+        + (rhrI ? '<div style="display:flex;justify-content:space-between;font-size:11px;color:#555;margin-bottom:3px"><span>Intake</span><span style="font-weight:700;color:#1a1a1a">' + rhrI + ' BPM</span></div>' : '')
+        + (rhrW4 ? '<div style="display:flex;justify-content:space-between;font-size:11px;color:#555;margin-bottom:3px"><span>Week 4</span><span style="font-weight:700;color:#1a1a1a">' + rhrW4 + ' BPM</span></div>' : '')
+        + (rhrW8 ? '<div style="display:flex;justify-content:space-between;font-size:11px;color:#555;margin-bottom:3px"><span>Week 8</span><span style="font-weight:700;color:#1a1a1a">' + rhrW8 + ' BPM</span></div>' : '')
+        + (rhrCls ? '<div style="margin-top:8px;padding:5px 10px;background:' + rhrCls.color + '22;border-radius:6px;font-size:10px;font-weight:700;color:' + rhrCls.color + '">' + rhrCls.label + (rhrChange ? ' · ' + rhrChange : '') + '</div>' : '')
+        + '</div>'
+        // BP card
+        + '<div style="background:#f8f7f3;border-radius:10px;padding:14px 16px;border:1px solid #e8e5db">'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#888;margin-bottom:6px">Blood Pressure</div>'
+        + (bpI ? '<div style="display:flex;justify-content:space-between;font-size:11px;color:#555;margin-bottom:3px"><span>Intake</span><span style="font-weight:700;color:#1a1a1a">' + bpI + '</span></div>' : '')
+        + (bpW4 ? '<div style="display:flex;justify-content:space-between;font-size:11px;color:#555;margin-bottom:3px"><span>Week 4</span><span style="font-weight:700;color:#1a1a1a">' + bpW4 + '</span></div>' : '')
+        + (bpW8 ? '<div style="display:flex;justify-content:space-between;font-size:11px;color:#555;margin-bottom:3px"><span>Week 8</span><span style="font-weight:700;color:#1a1a1a">' + bpW8 + '</span></div>' : '')
+        + (bpCls ? '<div style="margin-top:8px;padding:5px 10px;background:' + bpCls.color + '22;border-radius:6px;font-size:10px;font-weight:700;color:' + bpCls.color + '">' + bpCls.label + '</div>' : '')
+        + '</div>'
+        + '</div>';
+    })()
+
     +(compliancePct !== null
       ? '<div class="section-title">COMPLIANCE</div>'
         +'<div style="display:flex;align-items:center;gap:16px;margin-bottom:24px">'
@@ -3179,7 +3628,7 @@ function printProgressReport(clientId) {
 
     // Footer with QR code
     +(function(){
-      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/MRS_Client_Portal.html?client='+c.id;
+      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id;
       const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data='+encodeURIComponent(portalUrl)+'&bgcolor=0f0f0c&color=c9a227&format=png';
       return '<div class="footer-bar" style="display:flex;align-items:center;justify-content:space-between;gap:16px">'
         +'<div>'
