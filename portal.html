@@ -1572,6 +1572,25 @@ input[type=range]::-moz-range-thumb {
         </div>
       </div>
 
+      <!-- End of week nutrition question -->
+      <div class="card" id="nutritionCard" style="display:none">
+        <div class="card-label">Weekly Nutrition Check</div>
+        <div style="font-size:13px;color:var(--dim2);margin-bottom:14px;line-height:1.6">
+          How consistent were you with your nutrition this week? <span style="color:var(--dim)">(1 = off track, 10 = locked in)</span>
+        </div>
+        <div class="slider-field" style="margin-bottom:0">
+          <div class="slider-header">
+            <span class="slider-label">🥗 Nutrition Adherence</span>
+            <span class="slider-val" id="nutritionVal">5</span>
+          </div>
+          <input type="range" min="1" max="10" value="5" id="nutritionSlider"
+            oninput="document.getElementById('nutritionVal').textContent=this.value;updateNutritionScore()">
+        </div>
+        <button class="save-btn" style="width:100%;margin:16px 0 0" onclick="saveNutritionScore()">
+          Save Nutrition Score
+        </button>
+      </div>
+
     </div>
 
     <!-- ══ SCORE ══ -->
@@ -1612,25 +1631,6 @@ input[type=range]::-moz-range-thumb {
       <div class="card">
         <div class="card-label">Score Breakdown</div>
         <div id="breakdownRows"></div>
-      </div>
-
-      <!-- End of week nutrition question -->
-      <div class="card" id="nutritionCard" style="display:none">
-        <div class="card-label">Weekly Nutrition Check</div>
-        <div style="font-size:13px;color:var(--dim2);margin-bottom:14px;line-height:1.6">
-          How consistent were you with your nutrition this week? <span style="color:var(--dim)">(1 = off track, 10 = locked in)</span>
-        </div>
-        <div class="slider-field" style="margin-bottom:0">
-          <div class="slider-header">
-            <span class="slider-label">🥗 Nutrition Adherence</span>
-            <span class="slider-val" id="nutritionVal">5</span>
-          </div>
-          <input type="range" min="1" max="10" value="5" id="nutritionSlider"
-            oninput="document.getElementById('nutritionVal').textContent=this.value;updateNutritionScore()">
-        </div>
-        <button class="save-btn" style="width:100%;margin:16px 0 0" onclick="saveNutritionScore()">
-          Save Nutrition Score
-        </button>
       </div>
 
       <!-- Send to coach button lives on Coach tab only -->
