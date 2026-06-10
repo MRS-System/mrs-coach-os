@@ -1880,28 +1880,6 @@ function showToast(msg,color){
 let clientId=null,client=null;
 let workoutType=null,selectedRPE=null;
 
-// \u2500\u2500 Init \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-function init(){
-  clientId=getClientId();
-  if(clientId) client=getClientData(clientId);
-  if(!client){const pdb=portalDb();if(pdb.clientProfile){client=pdb.clientProfile;clientId=client.id;}}
-  if(client){
-    document.getElementById('hdrName').textContent=client.name;
-    document.getElementById('hdrAvatar').textContent=`${client.avatar} \u00b7 ${client.cohort||'1-on-1'}`;
-  }
-  const now=new Date();
-  document.getElementById('todayDate').textContent=`${DAYS[now.getDay()]}, ${MONTHS[now.getMonth()]} ${now.getDate()}`;
-  renderDayStrip();
-  renderTodayChecklist();
-  renderComebackCard();
-  checkSundayPrompt();
-  renderScore();
-  renderProgress();
-  renderProgram();
-  renderProfileStatus();
-  renderCoachTab();
-}
-
 // \u2500\u2500 Day Strip \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function renderDayStrip(){
   const pdb=portalDb(),days=getWeekDays();
@@ -2171,32 +2149,6 @@ function checkStreak(){
   renderComebackCard();
 }
 
-function sendToCoach(){
-  const pdb=portalDb(),scores=calcWeekScore(),wk=weekKey();
-  const days=getWeekDays();
-  // Collect workout logs for the week
-  const workoutLogs=days.map(d=>{
-    const ci=pdb.checkins[d.key];
-    if(!ci||ci.workout!=='yes')return null;
-    return{date:d.key,week:ci.workoutWeek,session:ci.workoutSession,rpe:ci.workoutRPE,lift:ci.workoutLift||''};
-  }).filter(Boolean);
-  const payload={
-    clientId,clientName:client?.name||'Unknown',weekKey:wk,
-    generatedAt:new Date().toISOString(),
-    weekScore:scores.total,scoreBreakdown:scores,
-    streak:pdb.streak,personalBest:pdb.personalBest||0,
-    checkins:Object.fromEntries(days.map(d=>[d.key,pdb.checkins[d.key]||null])),
-    nutritionScore:pdb.weekScores?.[wk]?.nutrition||null,
-    workoutLogs,
-  };
-  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url;a.download=`MRS_Weekly_${(client?.name||'client').replace(/\s+/g,'_')}_${wk}.json`;
-  a.click();URL.revokeObjectURL(url);
-  showToast('File downloaded \u2014 send to your coach \ud83d\udce4');
-}
-
 // \u2500\u2500 Progress \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function renderProgress(){
   const el=document.getElementById('progressContent');
@@ -2279,25 +2231,24 @@ function renderProgram(){
   weeks.map((wk,i)=>{
     const wkNum=i+1,isCurrent=wkNum===weekNum;
     const sessions=wk.split(/(?=###?\s*(SESSION|DAY|WORKOUT)\s*\d)/i).filter(s=>s.trim()&&!/^##?\s*WEEK/i.test(s.trim()));
-    if(!sessions.length)return`<div class="session-card ${isCurrent?'open':''}"><div class="session-header" onclick="toggleSession(this.parentElement)"><div><div class="session-title">Week ${wkNum}</div><div class="session-slots">${isCurrent?'Current week':'Tap to expand'}</div></div><span class="session-chevron">\u25be</span></div><div class="session-body"><div style="padding:14px 18px;font-size:12px;color:var(--dim2);line-height:1.8;white-space:pre-wrap">${wk.replace(/^##?\s*WEEK\s*\d[^\]*/im,'').trim().slice(0,800)}</div></div></div>`;
+    if(!sessions.length)return`<div class="session-card ${isCurrent?'open':''}"><div class="session-header" onclick="toggleSession(this.parentElement)"><div><div class="session-title">Week ${wkNum}</div><div class="session-slots">${isCurrent?'Current week':'Tap to expand'}</div></div><span class="session-chevron">\u25be</span></div><div class="session-body"><div style="padding:14px 18px;font-size:12px;color:var(--dim2);line-height:1.8;white-space:pre-wrap">${wk.replace(/^##?\s*WEEK\s*\d[^\]]*/im,'').trim().slice(0,800)}</div></div></div>`;
 
     return sessions.map((sess,si)=>{
       const slots=parseSlots(sess);
-      return`<div class="session-card ${isCurrent&&si===0?'open':''}"><div class="session-header" onclick="toggleSession(this.parentElement)"><div><div class="session-title">Week ${wkNum} \u00b7 Session ${si+1}</div><div class="session-slots">${slots.length} slots \u00b7 ${isCurrent?'Current week':'Tap to expand'}</div></div><span class="session-chevron">\u25be</span></div><div class="session-body">${slots.length?slots.map(s=>`<div class="slot-row"><div class="slot-letter">${s.letter}</div><div class="slot-info"><div class="slot-exercise">${s.exercise}</div>${s.spec?`<div class="slot-spec">${s.spec}</div>`:''}${s.cue?`<div class="slot-cue">${s.cue}</div>`:''}</div></div>`).join(''):`<div style="padding:14px 18px;font-size:12px;color:var(--dim);line-height:1.8;white-space:pre-wrap">${sess.replace(/^###?\s*(SESSION|DAY|WORKOUT)\s*\d[^\]*/im,'').trim().slice(0,500)}</div>`}</div></div>`;
+      return`<div class="session-card ${isCurrent&&si===0?'open':''}"><div class="session-header" onclick="toggleSession(this.parentElement)"><div><div class="session-title">Week ${wkNum} \u00b7 Session ${si+1}</div><div class="session-slots">${slots.length} slots \u00b7 ${isCurrent?'Current week':'Tap to expand'}</div></div><span class="session-chevron">\u25be</span></div><div class="session-body">${slots.length?slots.map(s=>`<div class="slot-row"><div class="slot-letter">${s.letter}</div><div class="slot-info"><div class="slot-exercise">${s.exercise}</div>${s.spec?`<div class="slot-spec">${s.spec}</div>`:''}${s.cue?`<div class="slot-cue">${s.cue}</div>`:''}</div></div>`).join(''):`<div style="padding:14px 18px;font-size:12px;color:var(--dim);line-height:1.8;white-space:pre-wrap">${sess.replace(/^###?\s*(SESSION|DAY|WORKOUT)\s*\d[^\]]*/im,'').trim().slice(0,500)}</div>`}</div></div>`;
 
     }).join('');
   }).join('');
 }
 
 function parseSlots(text){
-  const slots=[],re=/\*?\*?SLOT\s*([A-F])[^:]*:\*?\*?\s*([^\
-]+)/gi;let m;
+  const slots=[],re=/\*?\*?SLOT\s*([A-F])[^:]*:\*?\*?\s*([^\n]+)/gi;let m;
   while((m=re.exec(text))!==null){
     const letter=m[1].toUpperCase(),rest=m[2].trim();
     const specMatch=rest.match(/^([^\u00b7\-\u2013|]+?)[\s\u00b7\-\u2013|]+((?:Sets?|Reps?|RPE|Rest)[^\u00b7\-\u2013|]*)/i);
     const exercise=specMatch?specMatch[1].trim():rest.split(/[\u00b7\-\u2013|]/)[0].trim();
     const spec=specMatch?specMatch[2].trim():'';
-    const cueMatch=text.slice(m.index).match(/Cue:\s*[""]?([^"\]+)/i);
+    const cueMatch=text.slice(m.index).match(/Cue:\s*[""]?([^"\]]+)/i);
 
     slots.push({letter,exercise,spec,cue:cueMatch?cueMatch[1].trim().slice(0,100):''});
   }
@@ -2568,7 +2519,7 @@ function displayNRResult(result, context, timing) {
   const html = '<div style="padding:0 16px;margin-bottom:14px"><div style="background:var(--black3);border:1.5px solid ' + scoreColor + '33;border-radius:16px;padding:18px 16px;display:flex;align-items:center;gap:16px"><div style="width:80px;height:80px;border-radius:50%;border:4px solid ' + scoreColor + ';display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0"><div style="font-family:Bebas Neue,sans-serif;font-size:32px;color:' + scoreColor + ';line-height:1">' + score + '</div><div style="font-size:9px;color:' + scoreColor + ';font-family:Barlow Condensed,sans-serif;font-weight:700">/10</div></div><div style="flex:1"><div style="font-family:Bebas Neue,sans-serif;font-size:22px;color:' + scoreColor + ';letter-spacing:.04em;margin-bottom:4px">' + (result.scoreSummary||'') + '</div><div style="font-size:12px;color:var(--dim2);line-height:1.5">' + (result.insight||'') + '</div></div></div></div>'
     + '<div style="padding:0 16px;margin-bottom:14px"><div class="nr-macro-row"><div class="nr-macro"><div class="nr-macro-val" style="color:var(--gold)">' + (macros.protein||'?') + 'g</div><div class="nr-macro-label">Protein</div></div><div class="nr-macro"><div class="nr-macro-val" style="color:#60a5fa">' + (macros.carbs||'?') + 'g</div><div class="nr-macro-label">Carbs</div></div><div class="nr-macro"><div class="nr-macro-val" style="color:#f97316">' + (macros.fat||'?') + 'g</div><div class="nr-macro-label">Fat</div></div><div class="nr-macro"><div class="nr-macro-val">' + (macros.calories||'?') + '</div><div class="nr-macro-label">Calories</div></div></div></div>'
     + (result.alternative ? '<div style="padding:0 16px;margin-bottom:14px"><div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:12px;padding:14px"><div style="font-size:10px;font-weight:700;color:var(--green);margin-bottom:6px;font-family:Barlow Condensed,sans-serif;letter-spacing:.12em;text-transform:uppercase">Better Alternative</div><div style="font-size:13px;color:var(--dim2);line-height:1.6">' + result.alternative + '</div></div></div>' : '')
-    + '<div style="padding:0 16px;margin-bottom:8px"><button onclick="logNRMeal(' + score + ','' + JSON.stringify(macros).replace(/'/g,"\'") + '','' + (context||'').replace(/'/g,"\'") + '','' + timing + '','' + (result.proteinVerdict||'moderate') + '')" style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:12px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer">Log This Meal</button></div>';
+    + '<div style="padding:0 16px;margin-bottom:8px"><button onclick="logNRMeal(' + score + ',\'' + JSON.stringify(macros).replace(/'/g,"\'") + '\',\'' + (context||'').replace(/'/g,"\'") + '\',\'' + timing + '\',\'' + (result.proteinVerdict||'moderate') + '\')" style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:12px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer">Log This Meal</button></div>';
   document.getElementById('nrResultContent').innerHTML = html;
 }
 
@@ -2603,7 +2554,7 @@ function renderNRDailyLog() {
   const avgScore = Math.round(meals.reduce((s,m) => s+m.score, 0) / meals.length);
   const totalProtein = meals.reduce((s,m) => s+(m.macros?.protein||0), 0);
   const scoreColor = avgScore >= 8 ? 'var(--green)' : avgScore >= 6 ? 'var(--gold)' : 'var(--red)';
-  el.innerHTML = '<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px"><div style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);font-family:Barlow Condensed,sans-serif;margin-bottom:8px">Today's Meal Log</div><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;background:var(--black4);border-radius:10px;padding:10px"><div style="font-family:Bebas Neue,sans-serif;font-size:28px;color:' + scoreColor + ';line-height:1">' + avgScore + '</div><div><div style="font-size:12px;font-weight:700;color:var(--white)">Daily Avg Score</div><div style="font-size:11px;color:var(--dim)">' + meals.length + ' meal' + (meals.length!==1?'s':'') + ' · ~' + totalProtein + 'g protein</div></div></div>' + meals.map(function(m,i){const c=m.score>=8?'var(--green)':m.score>=6?'var(--gold)':'var(--red)';const time=new Date(m.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><div style="font-family:Bebas Neue,sans-serif;font-size:22px;color:'+c+';width:32px;text-align:center">'+m.score+'</div><div style="flex:1"><div style="font-size:12px;color:var(--white)">'+(m.context||'Meal '+(i+1))+'</div><div style="font-size:10px;color:var(--dim)">'+time+' · '+(m.macros?.protein||'?')+'g protein</div></div></div>';}).join('') + '</div>';
+  el.innerHTML = '<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px"><div style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);font-family:Barlow Condensed,sans-serif;margin-bottom:8px">Today\'s Meal Log</div><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;background:var(--black4);border-radius:10px;padding:10px"><div style="font-family:Bebas Neue,sans-serif;font-size:28px;color:' + scoreColor + ';line-height:1">' + avgScore + '</div><div><div style="font-size:12px;font-weight:700;color:var(--white)">Daily Avg Score</div><div style="font-size:11px;color:var(--dim)">' + meals.length + ' meal' + (meals.length!==1?'s':'') + ' · ~' + totalProtein + 'g protein</div></div></div>' + meals.map(function(m,i){const c=m.score>=8?'var(--green)':m.score>=6?'var(--gold)':'var(--red)';const time=new Date(m.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><div style="font-family:Bebas Neue,sans-serif;font-size:22px;color:'+c+';width:32px;text-align:center">'+m.score+'</div><div style="flex:1"><div style="font-size:12px;color:var(--white)">'+(m.context||'Meal '+(i+1))+'</div><div style="font-size:10px;color:var(--dim)">'+time+' · '+(m.macros?.protein||'?')+'g protein</div></div></div>';}).join('') + '</div>';
 }
 
 // ── Slot Logging ──────────────────────────────────────
@@ -2702,7 +2653,7 @@ function markSessionDone(sessionId) {
   pdb.slotChecks[sessionId]['_sessionDone'] = true;
   pdb.slotChecks[sessionId]['_doneAt'] = Date.now();
   savePortalDb(pdb);
-  const btn = document.querySelector('[onclick="markSessionDone('' + sessionId + '')"]');
+  const btn = document.querySelector('[onclick="markSessionDone(' + sessionId + ')"]');
   if (btn) { btn.textContent = '✓ Session Logged'; btn.style.background = 'var(--green)'; btn.style.color = 'var(--black)'; }
   updateWeekCompletionVisuals();
   showToast('Session logged!');
