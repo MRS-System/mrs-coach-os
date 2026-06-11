@@ -2234,7 +2234,9 @@ function renderProgram(){
   const pdb=portalDb();
   el.innerHTML=`<div class="week-badge"><span class="week-badge-text">\ud83d\udcc5 Currently Week ${weekNum}</span></div>`+
   weeks.map((wk,i)=>{
-    const wkNum=i+1,isCurrent=wkNum===weekNum;
+    const wkMatch=wk.match(/^#{1,2}\s*WEEK\s*(\d+)/im);
+    if(!wkMatch&&weeks.length>1)return'';
+    const wkNum=wkMatch?+wkMatch[1]:i+1,isCurrent=wkNum===weekNum;
     const coachMatch=wk.match(/^##?\s*WEEK\s*\d+[^\n]*\n+\*?\*?Coach:\s*([^\n*]+)\*?\*?/i);
     const coachNote=coachMatch?stripMd(coachMatch[1].trim()):'';
     const sessions=wk.split(/(?=^#{0,3}\s*(?:SESSION|DAY|WORKOUT)\s*\d)/im).filter(s=>s.trim()&&!/^##?\s*WEEK/i.test(s.trim()));
