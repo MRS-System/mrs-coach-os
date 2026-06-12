@@ -2297,7 +2297,7 @@ function renderProgram(){
     const wkNum=wkMatch?+wkMatch[1]:i+1,isCurrent=wkNum===weekNum;
     const coachMatch=wk.match(/^##?\s*WEEK\s*\d+[^\n]*\n+\*?\*?Coach:\s*([^\n*]+)\*?\*?/i);
     const coachNote=coachMatch?stripMd(coachMatch[1].trim()):'';
-    const sessions=wk.split(/(?=^#{0,3}\s*(?:SESSION|DAY|WORKOUT)\s*\d)/im).filter(s=>s.trim()&&!/^##?\s*WEEK/i.test(s.trim()));
+    const sessions=wk.split(/(?=^#{0,3}\s*\*{0,2}(?:SESSION|DAY|WORKOUT)\s*\d)/im).filter(s=>s.trim()&&!/^##?\s*WEEK/i.test(s.trim()));
     let body;
     if(!sessions.length){
       body=`<div style="white-space:pre-wrap;font-size:12px;color:var(--dim2);line-height:1.8">${stripMd(wk.replace(/^##?\s*WEEK\s*\d+.*$/im,'')).slice(0,800)}</div>`;
@@ -2347,7 +2347,7 @@ function renderProgram(){
             `</div>`;
           }).join('');
         }else{
-          inner=`<div style="white-space:pre-wrap;font-size:12px;color:var(--dim2);line-height:1.8">${stripMd(sess.replace(/^#{0,3}\s*(?:SESSION|DAY|WORKOUT)\s*\d+.*$/im,'')).slice(0,500)}</div>`;
+          inner=`<div style="white-space:pre-wrap;font-size:12px;color:var(--dim2);line-height:1.8">${stripMd(sess.replace(/^#{0,3}\s*\*{0,2}(?:SESSION|DAY|WORKOUT)\s*\d+.*$/im,'')).slice(0,500)}</div>`;
         }
         const doneBtn=slots.length?`<button class="prog-complete-btn" onclick="markSessionDone('${sessionId}')">${sessionDone?'\u2713 Session Logged':'Mark Session Done'}</button>`:'';
         return `<div class="prog-session-card prog-session ${open}" id="sess-${sessionId}"><div class="prog-session-header" onclick="toggleSession(this.parentElement)"><div><div class="prog-session-title">Session ${si+1}</div><div class="prog-session-meta">${slots.length} slot${slots.length===1?'':'s'} \u00b7 ${isCurrent?'Current week':'Tap to expand'}<span class="sess-pct"></span></div></div><span class="prog-chevron">\u25be</span></div><div class="prog-session-body">${inner}${doneBtn}</div></div>`;
