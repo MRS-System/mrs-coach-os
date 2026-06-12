@@ -2362,11 +2362,15 @@ function renderProgram(){
 function parseSlots(text){
   const slots=[];
   const lines=text.split('\n');
-  const slotRe=/^([A-F])\b(?:\s*[\u2014-]\s*[A-Za-z ]+)?\s*\|\s*(.+)$/;
+  // Tolerant of generator drift between weeks: whole-line **bold** wrap,
+  // superset numbering (B1/B2), an optional "\u2014 LABEL" suffix (e.g. "F \u2014 FINISHER"),
+  // and any spacing around the pipe.
+  const slotRe=/^([A-F])\d*\b(?:\s*[\u2014\u2013-]\s*[A-Za-z ]+)?\s*\|\s*(.+)$/i;
   const cueRe=/^\*{1,2}([^*]+)\*{1,2}\s*$/;
   const trackRe=/^\*{0,2}Track:\s*(.+?)\*{0,2}\s*$/i;
+  const deBold=s=>s.replace(/^\*+\s*/,'').replace(/\s*\*+$/,'').trim();
   for(let i=0;i<lines.length;i++){
-    const line=lines[i].trim();
+    const line=deBold(lines[i].trim());
     const m=line.match(slotRe);
     if(!m)continue;
     const letter=m[1].toUpperCase();
@@ -2377,6 +2381,8 @@ function parseSlots(text){
     for(let j=i+1;j<lines.length;j++){
       const next=lines[j].trim();
       if(!next)continue;
+      // Reached the next slot line \u2014 stop scanning this slot's cue/track.
+      if(deBold(next).match(slotRe))break;
       const cm=next.match(cueRe);
       const tm=next.match(trackRe);
       if(cm&&!cue)cue=stripMd(cm[1].trim());
