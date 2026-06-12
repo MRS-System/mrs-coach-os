@@ -693,6 +693,7 @@ input[type=range]::-moz-range-thumb {
 /* Slot log input */
 .slot-log-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 0 14px 12px 50px;
   align-items: center;
@@ -721,6 +722,12 @@ input[type=range]::-moz-range-thumb {
   text-transform: uppercase;
   white-space: nowrap;
   flex-shrink: 0;
+}
+.slot-log-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
 }
 .slot-prev {
   font-size: 10px;
@@ -764,6 +771,57 @@ input[type=range]::-moz-range-thumb {
 .prog-session-card.week-complete .prog-chevron {
   color: var(--green);
 }
+
+/* Week accordion (wraps each week's session cards) */
+.prog-week-card {
+  background: var(--black3);
+  border: 1.5px solid var(--border);
+  border-radius: 16px;
+  margin: 0 16px 14px;
+  overflow: hidden;
+  transition: border-color .2s;
+}
+.prog-week-card.open { border-color: rgba(201,162,39,.4); }
+.prog-week-header {
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  gap: 12px;
+}
+.prog-week-title {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 24px;
+  letter-spacing: .04em;
+  color: var(--gold);
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.prog-week-meta {
+  font-size: 11px;
+  color: var(--dim);
+  font-family: 'Barlow Condensed', sans-serif;
+  letter-spacing: .06em;
+}
+.prog-week-chevron {
+  font-size: 18px;
+  color: var(--dim);
+  transition: transform .2s;
+  flex-shrink: 0;
+}
+.prog-week-card.open .prog-week-chevron { transform: rotate(180deg); }
+.prog-week-body {
+  display: none;
+  border-top: 1px solid var(--border);
+  padding: 12px;
+}
+.prog-week-card.open .prog-week-body { display: block; }
+.prog-week-body .prog-session-card { margin: 0 0 12px; }
+.prog-week-body .prog-session-card:last-child { margin-bottom: 0; }
+.prog-week-card.week-complete { border-color: rgba(34,197,94,.3); background: rgba(34,197,94,.03); }
+.prog-week-card.week-complete .prog-week-title { color: var(--green); }
+.prog-week-card.week-complete .prog-week-chevron { color: var(--green); }
 
 /* ── NO CLIENT STATE ── */
 .no-client {
@@ -2242,7 +2300,7 @@ function renderProgram(){
     const sessions=wk.split(/(?=^#{0,3}\s*(?:SESSION|DAY|WORKOUT)\s*\d)/im).filter(s=>s.trim()&&!/^##?\s*WEEK/i.test(s.trim()));
     let body;
     if(!sessions.length){
-      body=`<div class="prog-session-card prog-session ${isCurrent?'open':''}"><div class="prog-session-header" onclick="toggleSession(this.parentElement)"><div><div class="prog-session-title">Week ${wkNum}</div><div class="prog-session-meta">${isCurrent?'Current week':'Tap to expand'}</div></div><span class="prog-chevron">\u25be</span></div><div class="prog-session-body"><div style="white-space:pre-wrap;font-size:12px;color:var(--dim2);line-height:1.8">${stripMd(wk.replace(/^##?\s*WEEK\s*\d+.*$/im,'')).slice(0,800)}</div></div></div>`;
+      body=`<div style="white-space:pre-wrap;font-size:12px;color:var(--dim2);line-height:1.8">${stripMd(wk.replace(/^##?\s*WEEK\s*\d+.*$/im,'')).slice(0,800)}</div>`;
     }else{
       body=sessions.map((sess,si)=>{
         const slots=parseSlots(sess);
@@ -2257,6 +2315,10 @@ function renderProgram(){
             const checked=checks[slotKey]===true;
             const log=checks[slotKey+'_log']||{};
             const prev=getPrevSlotLog(sessionId,slotKey);
+            const rpeMatch=s.spec.match(/RPE\s*([\d.]+(?:[-–][\d.]+)?)/i);
+            const rpeHint=rpeMatch?rpeMatch[1]:'';
+            const setsMatch=s.spec.match(/^(\d+)\s*[x×]/i);
+            const setsHint=setsMatch?setsMatch[1]:'';
             return `<div class="prog-slot-card ${checked?'slot-done':''}">`+
               `<div class="prog-slot-top">`+
                 `<div class="prog-slot-badge">${s.letter}</div>`+
@@ -2269,16 +2331,19 @@ function renderProgram(){
               `</div>`+
               `${s.cue?`<div class="prog-slot-cue">${s.cue}</div>`:''}`+
               `<div class="slot-log-row">`+
+                `<span class="slot-log-group"><span class="slot-log-label">Sets</span><input class="slot-log-input" style="flex:0 0 40px" type="text" inputmode="numeric" id="sls-${sessionId}-${slotKey}" placeholder="${prev?.sets||setsHint||'\u2014'}" value="${log.sets||''}" onchange="saveSlotLog('${sessionId}','${slotKey}',this)"></span>`+
+                `<span class="slot-log-group"><span class="slot-log-label">Reps</span><input class="slot-log-input" style="flex:0 0 40px" type="text" inputmode="numeric" id="slr-${sessionId}-${slotKey}" placeholder="${prev?.reps||'\u2014'}" value="${log.reps||''}" onchange="saveSlotLog('${sessionId}','${slotKey}',this)"></span>`+
+                `<span class="slot-log-group"><span class="slot-log-label">RPE</span><input class="slot-log-input" style="flex:0 0 40px" type="text" inputmode="decimal" id="sle-${sessionId}-${slotKey}" placeholder="${prev?.rpe||rpeHint||'\u2014'}" value="${log.rpe||''}" onchange="saveSlotLog('${sessionId}','${slotKey}',this)"></span>`+
+              `</div>`+
+              `<div class="slot-log-row">`+
                 `<span class="slot-log-label">Wt</span>`+
                 `<input class="slot-log-input" type="text" inputmode="decimal" id="slw-${sessionId}-${slotKey}" placeholder="${prev?.weight||'\u2014'}" value="${log.weight||''}" onchange="saveSlotLog('${sessionId}','${slotKey}',this)">`+
                 `<select class="slot-log-input" style="flex:0 0 64px" id="slu-${sessionId}-${slotKey}" onchange="saveSlotLog('${sessionId}','${slotKey}',this)">`+
                   `<option value="lbs" ${(log.unit||prev?.unit||'lbs')==='lbs'?'selected':''}>lbs</option>`+
                   `<option value="kg" ${(log.unit||prev?.unit)==='kg'?'selected':''}>kg</option>`+
                 `</select>`+
-                `<span class="slot-log-label">Reps</span>`+
-                `<input class="slot-log-input" type="text" inputmode="numeric" id="slr-${sessionId}-${slotKey}" placeholder="${prev?.reps||'\u2014'}" value="${log.reps||''}" onchange="saveSlotLog('${sessionId}','${slotKey}',this)">`+
               `</div>`+
-              `${prev?`<div class="slot-prev">Last time: ${prev.weight||'\u2014'}${prev.unit||'lbs'} \u00d7 ${prev.reps||'\u2014'}</div>`:''}`+
+              `${prev?`<div class="slot-prev">Last time: ${prev.sets?prev.sets+' \u00d7 ':''}${prev.reps||'\u2014'}${prev.rpe?' @ RPE '+prev.rpe:''} \u00b7 ${prev.weight||'\u2014'}${prev.unit||'lbs'}</div>`:''}`+
             `</div>`;
           }).join('');
         }else{
@@ -2288,8 +2353,10 @@ function renderProgram(){
         return `<div class="prog-session-card prog-session ${open}" id="sess-${sessionId}"><div class="prog-session-header" onclick="toggleSession(this.parentElement)"><div><div class="prog-session-title">Session ${si+1}</div><div class="prog-session-meta">${slots.length} slot${slots.length===1?'':'s'} \u00b7 ${isCurrent?'Current week':'Tap to expand'}<span class="sess-pct"></span></div></div><span class="prog-chevron">\u25be</span></div><div class="prog-session-body">${inner}${doneBtn}</div></div>`;
       }).join('');
     }
-    return `<div id="week-${wkNum}">${coachNote?`<div class="prog-coach-note">Coach: ${coachNote}</div>`:''}${body}</div>`;
+    const weekMeta=sessions.length?`${sessions.length} session${sessions.length===1?'':'s'} · ${isCurrent?'Current week':'Tap to expand'}`:(isCurrent?'Current week':'Tap to expand');
+    return `<div class="prog-week-card ${isCurrent?'open':''}" id="week-${wkNum}"><div class="prog-week-header" onclick="toggleSession(this.parentElement)"><div><div class="prog-week-title">Week ${wkNum}</div><div class="prog-week-meta">${weekMeta}</div></div><span class="prog-week-chevron">▾</span></div><div class="prog-week-body">${coachNote?`<div class="prog-coach-note">Coach: ${coachNote}</div>`:''}${body}</div></div>`;
   }).join('');
+  updateWeekCompletionVisuals();
 }
 
 function parseSlots(text){
@@ -2489,6 +2556,7 @@ function loadProfileFromCode() {
 
 // ── NutriReader ───────────────────────────────────────
 let nrTiming = 'meal';
+let nrPendingResult = null;
 
 function setNRTiming(t) {
   nrTiming = t;
@@ -2582,21 +2650,25 @@ function displayNRResult(result, context, timing) {
   const scoreColor = score >= 8 ? 'var(--green)' : score >= 6 ? 'var(--gold)' : score >= 4 ? 'rgba(249,115,22,1)' : 'var(--red)';
   const macros = result.macros || {};
   const breakdown = result.scoreBreakdown || {};
+  nrPendingResult = {result, context, timing};
   const html = '<div style="padding:0 16px;margin-bottom:14px"><div style="background:var(--black3);border:1.5px solid ' + scoreColor + '33;border-radius:16px;padding:18px 16px;display:flex;align-items:center;gap:16px"><div style="width:80px;height:80px;border-radius:50%;border:4px solid ' + scoreColor + ';display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0"><div style="font-family:Bebas Neue,sans-serif;font-size:32px;color:' + scoreColor + ';line-height:1">' + score + '</div><div style="font-size:9px;color:' + scoreColor + ';font-family:Barlow Condensed,sans-serif;font-weight:700">/10</div></div><div style="flex:1"><div style="font-family:Bebas Neue,sans-serif;font-size:22px;color:' + scoreColor + ';letter-spacing:.04em;margin-bottom:4px">' + (result.scoreSummary||'') + '</div><div style="font-size:12px;color:var(--dim2);line-height:1.5">' + (result.insight||'') + '</div></div></div></div>'
     + '<div style="padding:0 16px;margin-bottom:14px"><div class="nr-macro-row"><div class="nr-macro"><div class="nr-macro-val" style="color:var(--gold)">' + (macros.protein||'?') + 'g</div><div class="nr-macro-label">Protein</div></div><div class="nr-macro"><div class="nr-macro-val" style="color:#60a5fa">' + (macros.carbs||'?') + 'g</div><div class="nr-macro-label">Carbs</div></div><div class="nr-macro"><div class="nr-macro-val" style="color:#f97316">' + (macros.fat||'?') + 'g</div><div class="nr-macro-label">Fat</div></div><div class="nr-macro"><div class="nr-macro-val">' + (macros.calories||'?') + '</div><div class="nr-macro-label">Calories</div></div></div></div>'
     + (result.alternative ? '<div style="padding:0 16px;margin-bottom:14px"><div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:12px;padding:14px"><div style="font-size:10px;font-weight:700;color:var(--green);margin-bottom:6px;font-family:Barlow Condensed,sans-serif;letter-spacing:.12em;text-transform:uppercase">Better Alternative</div><div style="font-size:13px;color:var(--dim2);line-height:1.6">' + result.alternative + '</div></div></div>' : '')
-    + '<div style="padding:0 16px;margin-bottom:8px"><button onclick="logNRMeal(' + score + ',\'' + JSON.stringify(macros).replace(/'/g,"\'") + '\',\'' + (context||'').replace(/'/g,"\'") + '\',\'' + timing + '\',\'' + (result.proteinVerdict||'moderate') + '\')" style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:12px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer">Log This Meal</button></div>';
+    + '<div style="padding:0 16px;margin-bottom:8px"><button onclick="logNRMeal()" style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:12px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer">Log This Meal</button></div>';
   document.getElementById('nrResultContent').innerHTML = html;
 }
 
-function logNRMeal(score, macrosStr, context, timing, proteinVerdict) {
+function logNRMeal() {
+  if (!nrPendingResult) return;
+  const { result, context, timing } = nrPendingResult;
+  const score = result.score || 0;
+  const macros = result.macros || {};
+  const proteinVerdict = result.proteinVerdict || 'moderate';
   const pdb = portalDb();
   const today = todayKey();
   if (!pdb.checkins) pdb.checkins = {};
   if (!pdb.checkins[today]) pdb.checkins[today] = {};
   if (!pdb.checkins[today].meals) pdb.checkins[today].meals = [];
-  let macros = {};
-  try { macros = JSON.parse(macrosStr); } catch(e) {}
   pdb.checkins[today].meals.push({ts:Date.now(),score,macros,context,timing,proteinVerdict});
   if (proteinVerdict === 'high') {
     const totalProtein = pdb.checkins[today].meals.reduce((s,m) => s+(m.macros?.protein||0), 0);
@@ -2605,6 +2677,7 @@ function logNRMeal(score, macrosStr, context, timing, proteinVerdict) {
   }
   pdb.checkins[today].ts = Date.now();
   savePortalDb(pdb);
+  nrPendingResult = null;
   closeNutriReader();
   renderTodayChecklist();
   renderNRDailyLog();
@@ -2631,11 +2704,15 @@ function saveSlotLog(sessionId, slotKey, el) {
   const weightEl = document.getElementById('slw-' + sessionId + '-' + slotKey);
   const repsEl = document.getElementById('slr-' + sessionId + '-' + slotKey);
   const unitEl = document.getElementById('slu-' + sessionId + '-' + slotKey);
+  const rpeEl = document.getElementById('sle-' + sessionId + '-' + slotKey);
+  const setsEl = document.getElementById('sls-' + sessionId + '-' + slotKey);
   const weight = weightEl ? weightEl.value : '';
   const reps = repsEl ? repsEl.value : '';
   const unit = unitEl ? unitEl.value : 'lbs';
-  if (weight || reps) {
-    pdb.slotChecks[sessionId][slotKey + '_log'] = {weight, reps, unit, ts: Date.now()};
+  const rpe = rpeEl ? rpeEl.value : '';
+  const sets = setsEl ? setsEl.value : '';
+  if (weight || reps || rpe || sets) {
+    pdb.slotChecks[sessionId][slotKey + '_log'] = {weight, reps, unit, rpe, sets, ts: Date.now()};
     savePortalDb(pdb);
   }
 }
@@ -2692,21 +2769,13 @@ function updateSessionCompletionUI(sessionId) {
 
 function updateWeekCompletionVisuals() {
   const pdb = portalDb();
-  const prog = client?.programs?.find(p => p.id === client.activeProgramId);
-  if (!prog) return;
-  const weeks = prog.block1 ? prog.block1.split(/## WEEK \d+/i).filter(Boolean) : [];
-  weeks.forEach((_, wi) => {
-    const weekEl = document.getElementById('week-' + (wi+1));
-    if (!weekEl) return;
-    const sessions = weekEl.querySelectorAll('.prog-session');
-    const allDone = Array.from(sessions).every(s => {
-      const sessId = s.id?.replace('sess-','');
+  document.querySelectorAll('.prog-week-card[id^="week-"]').forEach(weekEl => {
+    const sessions = weekEl.querySelectorAll('.prog-session-card[id^="sess-"]');
+    const allDone = sessions.length > 0 && Array.from(sessions).every(s => {
+      const sessId = s.id.replace('sess-','');
       const checks = pdb.slotChecks?.[sessId] || {};
       const slots = s.querySelectorAll('.prog-slot-card');
-      return slots.length > 0 && Array.from(slots).every((_, si) => {
-        const letter = String.fromCharCode(65+si);
-        return checks[letter+si] === true;
-      });
+      return slots.length > 0 && Array.from(slots).every((_, si) => checks[String.fromCharCode(65+si)+si] === true);
     });
     weekEl.classList.toggle('week-complete', allDone);
   });
@@ -2719,7 +2788,7 @@ function markSessionDone(sessionId) {
   pdb.slotChecks[sessionId]['_sessionDone'] = true;
   pdb.slotChecks[sessionId]['_doneAt'] = Date.now();
   savePortalDb(pdb);
-  const btn = document.querySelector('[onclick="markSessionDone(' + sessionId + ')"]');
+  const btn = document.querySelector('#sess-' + sessionId + ' .prog-complete-btn');
   if (btn) { btn.textContent = '✓ Session Logged'; btn.style.background = 'var(--green)'; btn.style.color = 'var(--black)'; }
   updateWeekCompletionVisuals();
   showToast('Session logged!');
@@ -2739,8 +2808,8 @@ function sendToCoach() {
     Object.entries(pdb.slotChecks).forEach(([sessId, checks]) => {
       const logs = {};
       Object.entries(checks).forEach(([key, val]) => {
-        if (key.endsWith('_log') && val && (val.weight || val.reps)) {
-          logs[key.replace('_log','')] = {weight:val.weight, reps:val.reps, unit:val.unit||'lbs', ts:val.ts};
+        if (key.endsWith('_log') && val && (val.weight || val.reps || val.rpe || val.sets)) {
+          logs[key.replace('_log','')] = {weight:val.weight, reps:val.reps, unit:val.unit||'lbs', rpe:val.rpe||'', sets:val.sets||'', ts:val.ts};
         }
       });
       if (Object.keys(logs).length) slotLogs[sessId] = logs;
