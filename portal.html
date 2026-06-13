@@ -1719,18 +1719,6 @@ input[type=range]::-moz-range-thumb {
         <div class="sec-sub">Sync your data and send your week</div>
       </div>
 
-      <!-- Section 1: Load Profile -->
-      <div class="coach-section">
-        <div class="coach-section-title">📂 Load My Profile</div>
-        <div class="coach-section-sub">Your coach will send you a client file. Upload it here once to load your program, profile, and progress data.</div>
-        <div id="profileStatus">
-          <button class="upload-btn" onclick="document.getElementById('profileUpload').click()">
-            ⬆ Upload Client File
-          </button>
-          <input type="file" id="profileUpload" accept=".json,.html" style="display:none" onchange="loadProfile(this)">
-        </div>
-      </div>
-
       <!-- Section 2: Send Week -->
       <div class="coach-section">
         <div class="coach-section-title">📤 Send My Week to Coach</div>
@@ -2397,36 +2385,10 @@ function parseSlots(text){
 function toggleSession(card){card.classList.toggle('open');}
 
 // \u2500\u2500 Coach tab \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-function loadProfile(input){
-  const file=input.files[0];if(!file)return;
-  const reader=new FileReader();
-  reader.onload=function(e){
-    try{
-      const data=JSON.parse(e.target.result);
-      let clientData=null;
-      if(data.client)clientData=data.client;
-      else if(data.clients&&Array.isArray(data.clients)){const urlId=getClientId();clientData=urlId?data.clients.find(c=>c.id===urlId):data.clients[0];}
-      else if(data.id&&data.name)clientData=data;
-      if(!clientData){showToast('Could not find your profile in this file','var(--red)');return;}
-      const pdb=portalDb();pdb.clientProfile=clientData;savePortalDb(pdb);
-      client=clientData;clientId=clientData.id;
-      document.getElementById('hdrName').textContent=client.name;
-      document.getElementById('hdrAvatar').textContent=`${client.avatar} \u00b7 ${client.cohort||'1-on-1'}`;
-      renderProfileStatus();renderProgress();renderProgram();renderCoachTab();
-      showToast(`Welcome ${client.name}! Profile loaded \u2713`);
-    }catch(err){showToast('Could not read file. Ask your coach to resend.','var(--red)');}
-  };
-  reader.readAsText(file);input.value='';
-}
-
 function renderProfileStatus(){
   const el=document.getElementById('profileStatus');if(!el)return;
-  if(!client){
-    el.innerHTML=`<button class="upload-btn" onclick="document.getElementById('profileUpload').click()">\u2b06 Upload Client File</button><input type="file" id="profileUpload" accept=".json" style="display:none" onchange="loadProfile(this)">`;
-    return;
-  }
-  el.innerHTML=`<div class="profile-loaded"><div class="profile-loaded-icon">\u2705</div><div><div class="profile-loaded-name">${client.name}</div><div class="profile-loaded-meta">${client.avatar} \u00b7 ${client.cohort||'1-on-1'}</div></div></div>
-  <div style="margin-top:10px"><button class="upload-btn" style="font-size:11px;padding:10px" onclick="document.getElementById('profileUpload').click()">\u21bb Update Profile File</button><input type="file" id="profileUpload" accept=".json" style="display:none" onchange="loadProfile(this)"></div>`;
+  if(!client){ el.innerHTML=''; return; }
+  el.innerHTML=`<div class="profile-loaded"><div class="profile-loaded-icon">\u2705</div><div><div class="profile-loaded-name">${client.name}</div><div class="profile-loaded-meta">${client.avatar} \u00b7 ${client.cohort||'1-on-1'}</div></div></div>`;
 }
 
 function renderCoachTab(){
