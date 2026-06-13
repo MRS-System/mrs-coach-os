@@ -1632,7 +1632,7 @@ function saveNewClient() {
 // CLIENT PROFILE
 // ══════════════════════════════════════════════════════════════════
 let currentClientId = '';
-let genT1 = '', genT2 = '';
+let genT1 = '', genT2 = '', genEditingProgramId = null;
 let genBlock = 0; // 0=none, 1=block1, 2=block2
 
 function renderProfile(clientId) {
@@ -2223,7 +2223,7 @@ function getClient() {
 async function buildBlock1() {
   const c = getClient();
   if (!c) return;
-  genT1 = ''; genT2 = ''; genBlock = 1;
+  genT1 = ''; genT2 = ''; genBlock = 1; genEditingProgramId = null;
   showGenUI();
 
   // Build week pills
@@ -2286,6 +2286,14 @@ async function buildBlock2() {
       document.getElementById('genOutput').scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
 
+    // Persist newly-built weeks 5–8 onto the program being extended (Add Weeks 5–8 flow)
+    if (genEditingProgramId) {
+      const data = db();
+      const cc = data.clients.find(x => x.id === currentClientId);
+      const pp = cc && (cc.programs || []).find(x => x.id === genEditingProgramId);
+      if (pp) { pp.block1 = genT1; pp.block2 = genT2; pp.block1Only = false; cc.activeProgramId = pp.id; saveDb(data); }
+    }
+
     document.getElementById('genStatusBadge').style.display = 'none';
     document.getElementById('b2badge') && (document.getElementById('b2badge').textContent = '⚡ 8-Week Program Complete');
     document.getElementById('genActions').style.display = 'flex';
@@ -2321,6 +2329,22 @@ function saveProgramToClient() {
   if (!c) return;
   if (!c.programs) c.programs = [];
 
+  // Extending an existing program (Add Weeks 5–8): update it in place so weeks 5–8
+  // persist onto the same program instead of creating a duplicate.
+  if (genEditingProgramId) {
+    const existing = c.programs.find(x => x.id === genEditingProgramId);
+    if (existing) {
+      existing.block1 = genT1;
+      existing.block2 = genT2;
+      existing.block1Only = !genT2;
+      c.activeProgramId = existing.id;
+      saveDb(data);
+      toast('Program updated: ' + existing.title + ' ✓');
+      renderProfile(currentClientId);
+      return;
+    }
+  }
+
   const defaultName = `${c.name} · ${c.avatar} · ${c.level} · Block ${(c.programs.length + 1)}`;
   const programName = prompt('Name this program:', defaultName);
   if (programName === null) return;
@@ -2355,6 +2379,7 @@ function continueToBlock2(progId, clientId) {
   // Restore block1 into generator state
   genT1 = p.block1;
   genT2 = '';
+  genEditingProgramId = progId;
   currentClientId = clientId;
   // Show generator with block1 already loaded, skip to block2
   document.getElementById('genOutput').style.display = 'block';
