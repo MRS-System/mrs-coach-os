@@ -2920,6 +2920,28 @@ function init() {
 }
 
 window.addEventListener('load', init);
+
+// One-tap share link (?p=<id>): fetch the stored profile from the Worker and
+// load it through the SAME routine the manual paste flow uses (no duplicated
+// load logic). On any failure, fall back to the manual paste box.
+function loadSharedProfile() {
+  var id = new URLSearchParams(window.location.search).get('p');
+  if (!id) return;
+  fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile?id=' + encodeURIComponent(id))
+    .then(function(res){ if (!res.ok) throw new Error('not found'); return res.text(); })
+    .then(function(jsonText){
+      JSON.parse(jsonText); // validate before handing to the paste routine
+      var el = document.getElementById('profileCodeInput');
+      if (!el) throw new Error('no input');
+      el.value = btoa(unescape(encodeURIComponent(jsonText)));
+      loadProfileFromCode();
+      try { history.replaceState(null, '', window.location.pathname); } catch(e) {}
+    })
+    .catch(function(){
+      showToast('Could not open your profile link — paste your profile code on the Coach tab.');
+    });
+}
+window.addEventListener('DOMContentLoaded', loadSharedProfile);
 </script>
 </body>
 </html>

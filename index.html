@@ -2460,6 +2460,20 @@ function viewSavedProgram(progId, clientId) {
 // =============================================
 // EXPORT SINGLE CLIENT
 // =============================================
+// Store the full profile JSON in the Worker (KV) and return a one-tap
+// portal link (?p=<id>). The manual paste-code export remains as fallback.
+async function createShareLink(profileJson) {
+  const res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: profileJson
+  });
+  if (!res.ok) throw new Error('share link failed: ' + res.status);
+  const data = await res.json();
+  if (!data || !data.id) throw new Error('no id returned');
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id;
+}
+
 function exportClient(clientId) {
   var database = db();
   var c = (database.clients || []).find(function(x){ return x.id === clientId; });
@@ -2581,6 +2595,9 @@ function exportClient(clientId) {
     + '</div>'
     + '<div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain;touch-action:pan-y">'
 
+    + '<div style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;font-family:Barlow Condensed,sans-serif">One-Tap Setup Link</div>'
+    + '<div id="oneTapLinkStatus" style="background:rgba(201,162,39,.06);border:1px solid rgba(201,162,39,.15);border-radius:8px;padding:11px;font-size:12px;color:var(--dim);margin-bottom:16px">Generating secure link…</div>'
+
     + '<div style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;font-family:Barlow Condensed,sans-serif">Step 1 — Send Portal Link</div>'
     + (c.email
       ? '<a href="' + mailtoLink + '" style="display:block;width:100%;padding:13px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:17px;letter-spacing:.1em;cursor:pointer;margin-bottom:8px;text-align:center;text-decoration:none">Email ' + c.name + '</a>'
@@ -2602,6 +2619,15 @@ function exportClient(clientId) {
     + '</div></div>';
 
   document.getElementById("measureModal").classList.add("active");
+
+  // Generate the KV-backed one-tap link asynchronously; manual paste code stays as fallback.
+  createShareLink(profileJson).then(function(link){
+    var el = document.getElementById('oneTapLinkStatus');
+    if (el) el.outerHTML = '<button onclick="copyOnboardMessage(this)" data-name="" data-url="' + link + '" data-linkonly="1" style="width:100%;padding:13px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:17px;letter-spacing:.1em;cursor:pointer;margin-bottom:16px">Copy One-Tap Link</button>';
+  }).catch(function(){
+    var el = document.getElementById('oneTapLinkStatus');
+    if (el) el.textContent = 'One-tap link unavailable — use the profile code below.';
+  });
 }
 
 function closeMeasureModal(){
