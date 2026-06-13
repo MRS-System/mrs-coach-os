@@ -2587,6 +2587,35 @@ function closeNutriReader() {
   renderNRDailyLog();
 }
 
+// Downscale the selected photo on-device before encoding/upload so a
+// full-resolution phone image isn't base64-encoded and sent in full (the
+// slow client-side step). Longest edge ~1500px, JPEG q0.8. Prefers
+// createImageBitmap (fast + correct EXIF orientation), falls back to Image().
+async function resizeImageForUpload(file) {
+  const MAX_EDGE = 1500;
+  let src, w, h;
+  try {
+    src = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    w = src.width; h = src.height;
+  } catch (e) {
+    src = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+    w = src.naturalWidth || src.width; h = src.naturalHeight || src.height;
+  }
+  const scale = Math.min(1, MAX_EDGE / Math.max(w, h));
+  const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = cw; canvas.height = ch;
+  canvas.getContext('2d').drawImage(src, 0, 0, cw, ch);
+  if (src.close) src.close();
+  if (src.src && src.src.startsWith('blob:')) URL.revokeObjectURL(src.src);
+  return canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+}
+
 function handleNRPhoto(input) {
   const file = input.files[0];
   if (!file) return;
@@ -2597,25 +2626,22 @@ function handleNRPhoto(input) {
   const msgs = ['Identifying foods and estimating portions...','Calculating protein and macros...','Scoring meal quality...','Building your insight...'];
   let msgIdx = 0;
   const msgInterval = setInterval(() => { msgIdx = (msgIdx + 1) % msgs.length; const el = document.getElementById('nrLoadingMsg'); if(el) el.textContent = msgs[msgIdx]; }, 2500);
-  const reader = new FileReader();
-  reader.onload = async function(e) {
-    const base64 = e.target.result.split(',')[1];
-    const mediaType = file.type || 'image/jpeg';
+  (async function() {
     const context = document.getElementById('nrContext').value.trim();
     const timing = nrTiming;
     const goal = client ? client.goal : 'Fat Loss';
     const avatar = client ? client.avatar : '';
     const bodyweight = client?.intake?.weight || '';
     try {
-      const result = await callNutriReaderAPI(base64, mediaType, context, timing, goal, avatar, bodyweight);
+      const base64 = await resizeImageForUpload(file);
+      const result = await callNutriReaderAPI(base64, 'image/jpeg', context, timing, goal, avatar, bodyweight);
       clearInterval(msgInterval);
       displayNRResult(result, context, timing);
     } catch(err) {
       clearInterval(msgInterval);
       document.getElementById('nrLoading').innerHTML = '<div style="font-size:40px;margin-bottom:16px">⚠️</div><div style="font-family:Bebas Neue,sans-serif;font-size:22px;color:var(--red);margin-bottom:12px">Scan Failed</div><div style="font-size:13px;color:var(--dim2);line-height:1.7;text-align:center;padding:0 24px;margin-bottom:24px">We couldn\'t read that photo clearly. Try better lighting, get closer to the food, or make sure the food is visible.</div><button onclick="closeNutriReader()" style="padding:14px 32px;background:var(--gold);border:none;border-radius:12px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;cursor:pointer">Go Back</button>';
     }
-  };
-  reader.readAsDataURL(file);
+  })();
   input.value = '';
 }
 
