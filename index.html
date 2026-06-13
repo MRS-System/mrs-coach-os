@@ -371,6 +371,13 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
           </div>
           <input type="file" id="weeklyFileInput" accept=".json" style="display:none" multiple onchange="processWeeklyFiles(this.files)">
 
+          <!-- Paste sync code (link-based client sync) -->
+          <div style="margin-bottom:1.25rem">
+            <div style="font-size:12px;color:var(--dim);margin-bottom:8px;line-height:1.6">Or paste a client's sync code (they tap "Send via Link" in their portal):</div>
+            <textarea id="importCodeInput" placeholder="Paste client sync code…" style="width:100%;background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;padding:10px;color:var(--white);font-family:monospace;font-size:12px;min-height:44px;resize:none;outline:none;margin-bottom:8px"></textarea>
+            <button onclick="importClientWeekById(document.getElementById('importCodeInput').value)" style="width:100%;padding:13px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:16px;letter-spacing:.08em;cursor:pointer">⬇ Import From Code</button>
+          </div>
+
           <!-- Results -->
           <div id="weeklyResults"></div>
         </div>
@@ -826,6 +833,50 @@ function handleWeeklyDrop(event) {
   if (files.length) processWeeklyFiles(files);
 }
 
+// Merge one client weekly payload into the OS. Match by stable client id,
+// idempotent per weekKey, never create a client, never touch coach-entered
+// fields (writes only weeklyData + lastSeen). Returns an outcome object.
+// Shared by the file-upload path and the link-pull path.
+function mergeClientWeek(data) {
+  if (!data || !data.clientId || !data.weekKey) {
+    return { success: false, msg: 'Not a valid client week file' };
+  }
+  const database = db();
+  const clientIdx = (database.clients || []).findIndex(c => c.id === data.clientId);
+  if (clientIdx === -1) {
+    return { success: false, msg: 'Client not found in OS — ' + (data.clientName || data.clientId) };
+  }
+  const c = database.clients[clientIdx];
+  if (!c.weeklyData) c.weeklyData = [];
+  // Remove existing entry for this week if present (idempotent per week)
+  c.weeklyData = c.weeklyData.filter(w => w.weekKey !== data.weekKey);
+  c.weeklyData.push({
+    weekKey: data.weekKey,
+    uploadedAt: new Date().toISOString(),
+    weekScore: data.weekScore || 0,
+    scoreBreakdown: data.scoreBreakdown || {},
+    streak: data.streak || 0,
+    personalBest: data.personalBest || 0,
+    checkins: data.checkins || {},
+    nutritionScore: data.nutritionScore || null,
+    workoutLogs: data.workoutLogs || [],
+    slotLogs: data.slotLogs || {},
+    mealScans: data.mealScans || {},
+    avgNutriScore: data.avgNutriScore || null,
+  });
+  c.lastSeen = Date.now();
+  database.clients[clientIdx] = c;
+  saveDb(database);
+  return {
+    success: true,
+    clientName: c.name,
+    weekKey: data.weekKey,
+    score: data.weekScore || 0,
+    workoutCount: (data.workoutLogs || []).length,
+    streak: data.streak || 0,
+  };
+}
+
 function processWeeklyFiles(files) {
   const results = document.getElementById('weeklyResults');
   const log = document.getElementById('weeklyLog');
@@ -846,65 +897,9 @@ function processWeeklyFiles(files) {
     reader.onload = function(e) {
       try {
         const data = JSON.parse(e.target.result);
-
-        // Validate it is a client weekly file
-        if (!data.clientId || !data.weekKey) {
-          outcomes.push({ name: file.name, success: false, msg: 'Not a valid client week file' });
-          processed++;
-          if (processed === files.length) renderWeeklyResults(outcomes, log, results);
-          return;
-        }
-
-        // Find the client in the OS
-        const database = db();
-        const clientIdx = (database.clients || []).findIndex(c => c.id === data.clientId);
-
-        if (clientIdx === -1) {
-          outcomes.push({ name: file.name, success: false, msg: 'Client not found in OS — ' + (data.clientName || data.clientId) });
-          processed++;
-          if (processed === files.length) renderWeeklyResults(outcomes, log, results);
-          return;
-        }
-
-        const c = database.clients[clientIdx];
-
-        // Save weekly data into client profile
-        if (!c.weeklyData) c.weeklyData = [];
-
-        // Remove existing entry for this week if present
-        c.weeklyData = c.weeklyData.filter(w => w.weekKey !== data.weekKey);
-
-        // Add the new weekly data
-        c.weeklyData.push({
-          weekKey: data.weekKey,
-          uploadedAt: new Date().toISOString(),
-          weekScore: data.weekScore || 0,
-          scoreBreakdown: data.scoreBreakdown || {},
-          streak: data.streak || 0,
-          personalBest: data.personalBest || 0,
-          checkins: data.checkins || {},
-          nutritionScore: data.nutritionScore || null,
-          workoutLogs: data.workoutLogs || [],
-          slotLogs: data.slotLogs || {},
-          mealScans: data.mealScans || {},
-          avgNutriScore: data.avgNutriScore || null,
-        });
-
-        // Update lastSeen
-        c.lastSeen = Date.now();
-        database.clients[clientIdx] = c;
-        saveDb(database);
-
-        outcomes.push({
-          name: file.name,
-          success: true,
-          clientName: c.name,
-          weekKey: data.weekKey,
-          score: data.weekScore || 0,
-          workoutCount: (data.workoutLogs || []).length,
-          streak: data.streak || 0,
-        });
-
+        const outcome = mergeClientWeek(data);
+        outcome.name = file.name;
+        outcomes.push(outcome);
       } catch(err) {
         outcomes.push({ name: file.name, success: false, msg: 'Could not read file — ' + err.message });
       }
@@ -915,6 +910,39 @@ function processWeeklyFiles(files) {
     reader.readAsText(file);
   });
 }
+
+// Pull a client's weekly payload from the Worker by sync code/id and merge it
+// through the same mergeClientWeek path as file upload.
+async function importClientWeekById(id) {
+  id = (id || '').trim();
+  if (!id) { toast('Paste a client sync code first'); return; }
+  let data;
+  try {
+    const res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile?id=' + encodeURIComponent(id));
+    if (!res.ok) throw new Error('status ' + res.status);
+    data = JSON.parse(await res.text());
+  } catch(e) {
+    toast('Could not fetch that sync code — check it and try again');
+    return;
+  }
+  const outcome = mergeClientWeek(data);
+  outcome.name = 'Sync code ' + id;
+  const results = document.getElementById('weeklyResults');
+  const log = document.getElementById('weeklyLog');
+  if (results && log) renderWeeklyResults([outcome], log, results);
+  toast(outcome.success ? (outcome.clientName + ' synced ✓') : ('Sync failed — ' + outcome.msg));
+  const box = document.getElementById('importCodeInput'); if (box) box.value = '';
+}
+
+// Tapped link support: index.html?import=<id> auto-imports on load via a
+// SEPARATE listener (init is untouched).
+function autoImportClientWeek() {
+  const id = new URLSearchParams(window.location.search).get('import');
+  if (!id) return;
+  importClientWeekById(id);
+  try { history.replaceState(null, '', window.location.pathname); } catch(e) {}
+}
+window.addEventListener('DOMContentLoaded', autoImportClientWeek);
 
 function renderWeeklyResults(outcomes, log, results) {
   const succeeded = outcomes.filter(o => o.success);

@@ -1733,6 +1733,10 @@ input[type=range]::-moz-range-thumb {
         <button class="send-week-btn" onclick="sendToCoach()">
           📤 Send Week to Coach
         </button>
+        <button class="send-week-btn" style="margin-top:8px;background:var(--black3);color:var(--gold);border:1px solid var(--border2)" onclick="sendToCoachViaLink()">
+          🔗 Send via Link (no file)
+        </button>
+        <div id="sendLinkStatus" style="font-size:11px;color:var(--dim2);margin-top:8px;line-height:1.6"></div>
       </div>
 
       <!-- Section 3: My Setup -->
@@ -2783,7 +2787,10 @@ function markSessionDone(sessionId) {
 }
 
 // ── Updated sendToCoach with slot and meal data ───────
-function sendToCoach() {
+// Build the weekly check-in payload. Shared by sendToCoach (file download)
+// and sendToCoachViaLink (Worker upload). Payload assembly is verbatim from
+// the original sendToCoach — no logic change.
+function buildWeeklyPayload() {
   const pdb = portalDb(), scores = calcWeekScore(), wk = weekKey();
   const days = getWeekDays();
   const workoutLogs = days.map(d => {
@@ -2807,16 +2814,43 @@ function sendToCoach() {
   days.forEach(d => { const meals = pdb.checkins?.[d.key]?.meals; if (meals?.length) mealScans[d.key] = meals; });
   const avgNutriScore = Object.values(mealScans).flat().length > 0
     ? Math.round(Object.values(mealScans).flat().reduce((s,m) => s+m.score, 0) / Object.values(mealScans).flat().length) : null;
-  const payload = {clientId, clientName:client?.name||'Unknown', weekKey:wk, generatedAt:new Date().toISOString(),
+  return {clientId, clientName:client?.name||'Unknown', weekKey:wk, generatedAt:new Date().toISOString(),
     weekScore:scores.total, scoreBreakdown:scores, streak:pdb.streak, personalBest:pdb.personalBest||0,
     checkins:Object.fromEntries(days.map(d=>[d.key, pdb.checkins[d.key]||null])),
     workoutLogs, slotLogs, mealScans, avgNutriScore};
+}
+
+function sendToCoach() {
+  const payload = buildWeeklyPayload();
+  const wk = payload.weekKey;
   const blob = new Blob([JSON.stringify(payload,null,2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = 'MRS_Weekly_' + (client?.name||'client').replace(/\s+/g,'_') + '_' + wk + '.json';
   a.click(); URL.revokeObjectURL(url);
   showToast('File downloaded — send to your coach');
+}
+
+// Reverse sync: POST the same weekly payload to the Worker and surface a short
+// code the client sends to their coach (coach pulls it via GET /profile).
+async function sendToCoachViaLink() {
+  const statusEl = document.getElementById('sendLinkStatus');
+  if (statusEl) statusEl.textContent = 'Generating your sync code…';
+  try {
+    const payload = buildWeeklyPayload();
+    const res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error('status ' + res.status);
+    const data = await res.json();
+    if (!data || !data.id) throw new Error('no id');
+    if (navigator.clipboard) { try { await navigator.clipboard.writeText(data.id); } catch(e) {} }
+    if (statusEl) statusEl.textContent = 'Sync code copied: ' + data.id + ' — send it to your coach.';
+    showToast('Sync code ' + data.id + ' copied — send to your coach');
+  } catch(e) {
+    if (statusEl) statusEl.textContent = 'Could not generate a sync code — use the file download instead.';
+    showToast('Sync failed — use the file download instead', 'var(--red)');
+  }
 }
 
 
