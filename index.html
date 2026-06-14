@@ -853,6 +853,7 @@ function mergeClientWeek(data) {
   c.weeklyData.push({
     weekKey: data.weekKey,
     uploadedAt: new Date().toISOString(),
+    seen: false,
     weekScore: data.weekScore || 0,
     scoreBreakdown: data.scoreBreakdown || {},
     streak: data.streak || 0,
@@ -930,7 +931,12 @@ async function importClientWeekById(id) {
   const results = document.getElementById('weeklyResults');
   const log = document.getElementById('weeklyLog');
   if (results && log) renderWeeklyResults([outcome], log, results);
-  toast(outcome.success ? (outcome.clientName + ' synced ✓') : ('Sync failed — ' + outcome.msg));
+  let wkLabel = outcome.weekKey ? outcome.weekKey.replace('week-', 'Week of ') : '';
+  if (outcome.success) {
+    const cc = (db().clients || []).find(x => x.id === data.clientId);
+    if (cc) wkLabel = programWeekLabel(cc, outcome.weekKey);
+  }
+  toast(outcome.success ? (outcome.clientName + ' — ' + wkLabel + ' received ✓') : ('Sync failed — ' + outcome.msg));
   const box = document.getElementById('importCodeInput'); if (box) box.value = '';
 }
 
@@ -1541,6 +1547,7 @@ function renderDashboard() {
 function clientCard(c) {
   const lastDate = c.lastSeen ? new Date(c.lastSeen).toLocaleDateString() : 'Never';
   const progCount = (c.programs || []).length;
+  const unread = (c.weeklyData || []).filter(w => w.seen === false).length;
   return `
     <div class="client-card" onclick="nav('profile','${c.id}')">
       <div class="client-card-top">
@@ -1549,6 +1556,7 @@ function clientCard(c) {
           <div class="client-name">${c.name}</div>
           <div class="client-avatar-name">${c.avatar}</div>
         </div>
+        ${unread > 0 ? `<span style="margin-left:auto;background:var(--gold);color:var(--black);font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.06em;border-radius:20px;padding:2px 9px;white-space:nowrap">${unread} new</span>` : ''}
       </div>
       <div class="client-meta">
         <span class="meta-tag">${c.level}</span>
@@ -1837,6 +1845,9 @@ function renderProfile(clientId) {
         <button class="btn gold full" onclick="buildBlock1()">BUILD 8-WEEK PROGRAM →</button>
       </div>
     </div>
+
+    <!-- CHECK-INS INBOX -->
+    ${buildCheckinsPanel(c)}
 
     <!-- TRENDS -->
     <div class="card" id="trendsCard-${c.id}">
@@ -2726,6 +2737,123 @@ function exportClientFile(clientId) {
   a.click();
   URL.revokeObjectURL(url);
   toast(c.name + ' file exported 📁');
+}
+
+// ══════════════════════════════════════════════════════════════════
+// CHECK-INS INBOX — per-week received records (read/unread)
+// ══════════════════════════════════════════════════════════════════
+// Program-relative week label ("Week N of 8") derived from the client's
+// active program start date. Falls back to "Week of {date}" when no program
+// start is derivable or the week falls outside the 8-week block — so a gap in
+// the sequence visibly reveals a skipped check-in.
+function programWeekLabel(c, weekKey) {
+  const dm = /^week-(\d{4})-(\d{2})-(\d{2})$/.exec(weekKey || '');
+  const fallback = dm
+    ? 'Week of ' + new Date(+dm[1], +dm[2]-1, +dm[3]).toLocaleDateString('en-US', {month:'short', day:'numeric'})
+    : 'Week ' + (weekKey || '').replace('week-', '');
+  const prog = (c.programs || []).find(p => p.id === c.activeProgramId);
+  if (!prog || !prog.date || !dm) return fallback;
+  const checkinSunday = new Date(+dm[1], +dm[2]-1, +dm[3]);
+  const ps = new Date(prog.date);
+  const progSunday = new Date(ps.getFullYear(), ps.getMonth(), ps.getDate() - ps.getDay());
+  const weekNum = Math.round((checkinSunday - progSunday) / (7*86400000)) + 1;
+  if (weekNum < 1 || weekNum > 8) return fallback;
+  return 'Week ' + weekNum + ' of 8';
+}
+
+// The Check-ins card: one row per received week (newest first), each with a
+// program-week label, score, sessions done, receipt date + streak, an unread
+// dot, and tap-to-expand session/meal/breakdown detail. Empty -> no card.
+function buildCheckinsPanel(c) {
+  const weeks = (c.weeklyData || []).slice().sort((a, b) => a.weekKey < b.weekKey ? 1 : -1);
+  if (!weeks.length) return '';
+  const rows = weeks.map(w => {
+    const rowId = 'ci-' + c.id + '-' + w.weekKey;
+    const unread = w.seen === false;
+    const sessions = (w.workoutLogs || []).length;
+    const freq = w.scoreBreakdown && w.scoreBreakdown.freq ? w.scoreBreakdown.freq : '';
+    const recv = w.uploadedAt ? new Date(w.uploadedAt).toLocaleDateString('en-US', {month:'short', day:'numeric'}) : '—';
+
+    const wlogs = w.workoutLogs || [];
+    const sessionsHtml = wlogs.length ? wlogs.map(l => {
+      const dn = l.date ? new Date(l.date + 'T00:00').toLocaleDateString('en-US', {weekday:'short'}) : '';
+      return `<div style="font-size:11px;color:var(--dim-2);padding:2px 0">${dn} · S${l.session || '?'}${l.rpe ? ' · RPE ' + l.rpe : ''}${l.lift ? ' · ' + l.lift : ''}</div>`;
+    }).join('') : '<div style="font-size:11px;color:var(--dim);font-style:italic">No sessions logged</div>';
+
+    const scans = w.mealScans || {};
+    const scanDays = Object.keys(scans).sort();
+    const mealsHtml = scanDays.length ? scanDays.map(dk => {
+      const meals = scans[dk] || [];
+      const dn = new Date(dk + 'T00:00').toLocaleDateString('en-US', {weekday:'short'});
+      const avg = meals.length ? Math.round(meals.reduce((s, m) => s + (m.score || 0), 0) / meals.length) : 0;
+      return `<span style="font-size:11px;color:var(--dim-2);margin-right:10px">${dn} ${avg}/10</span>`;
+    }).join('') : '<div style="font-size:11px;color:var(--dim);font-style:italic">No meal scans</div>';
+
+    const sb = w.scoreBreakdown || {};
+    const chips = [['P',sb.protein],['W',sb.water],['Wk',sb.workoutScore],['E',sb.energyScore],['Sl',sb.sleepScore],['St',sb.stressScore],['N',sb.nutritionScore]]
+      .filter(x => x[1] != null)
+      .map(x => `<span style="font-size:10px;color:var(--dim-2);background:var(--black-4);border-radius:4px;padding:2px 6px;margin-right:4px">${x[0]} ${x[1]}</span>`).join('');
+
+    const detail = `
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:6px 0 3px">Sessions</div>
+      ${sessionsHtml}
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:8px 0 3px">Meals${w.avgNutriScore != null ? ' · avg ' + w.avgNutriScore + '/10' : ''}</div>
+      <div>${mealsHtml}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:8px 0 3px">Breakdown</div>
+      <div>${chips || '<span style="font-size:11px;color:var(--dim);font-style:italic">No breakdown</span>'}</div>`;
+
+    return `<div style="border-bottom:1px solid var(--border)">
+      <div onclick="toggleCheckinWeek('${c.id}','${w.weekKey}')" style="display:flex;align-items:center;gap:8px;padding:10px 2px;cursor:pointer">
+        <span id="${rowId}-dot" style="width:8px;height:8px;border-radius:50%;background:var(--gold);flex-shrink:0;${unread ? '' : 'visibility:hidden'}"></span>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-weight:700;font-size:13px;color:var(--white)">${programWeekLabel(c, w.weekKey)}</span>
+            <span style="font-family:Bebas Neue,sans-serif;font-size:16px;color:var(--gold);letter-spacing:.04em">${w.weekScore || 0}<span style="font-size:10px;color:var(--dim)">/49</span></span>
+            <span style="font-size:11px;color:var(--dim-2)">${sessions}${freq ? '/' + freq : ''} session${sessions !== 1 ? 's' : ''}</span>
+          </div>
+          <div style="font-size:10px;color:var(--dim);margin-top:2px">Received ${recv} · 🔥 ${w.streak || 0} wk streak</div>
+        </div>
+        <span id="${rowId}-caret" style="color:var(--dim);font-size:12px;flex-shrink:0">▸</span>
+      </div>
+      <div id="${rowId}-detail" style="display:none;padding:0 2px 12px 18px">${detail}</div>
+    </div>`;
+  }).join('');
+
+  const unreadCount = weeks.filter(w => w.seen === false).length;
+  return `<div class="card">
+    <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+      Check-ins
+      <span style="font-size:9px;color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0">${unreadCount ? unreadCount + ' new · ' : ''}${weeks.length} week${weeks.length !== 1 ? 's' : ''}</span>
+    </div>
+    ${rows}
+  </div>`;
+}
+
+// Expand/collapse a check-in row; clears its unread flag on first open.
+function toggleCheckinWeek(clientId, weekKey) {
+  const id = 'ci-' + clientId + '-' + weekKey;
+  const detail = document.getElementById(id + '-detail');
+  const caret = document.getElementById(id + '-caret');
+  const dot = document.getElementById(id + '-dot');
+  if (!detail) return;
+  const opening = detail.style.display === 'none';
+  detail.style.display = opening ? 'block' : 'none';
+  if (caret) caret.textContent = opening ? '▾' : '▸';
+  if (opening && dot && dot.style.visibility !== 'hidden') {
+    dot.style.visibility = 'hidden';
+    markCheckinWeekSeen(clientId, weekKey);
+  }
+}
+
+// Persist seen=true for one received week.
+function markCheckinWeekSeen(clientId, weekKey) {
+  const data = db();
+  const c = (data.clients || []).find(x => x.id === clientId);
+  if (!c) return;
+  const w = (c.weeklyData || []).find(x => x.weekKey === weekKey);
+  if (!w || w.seen === true) return;
+  w.seen = true;
+  saveDb(data);
 }
 
 // ══════════════════════════════════════════════════════════════════
