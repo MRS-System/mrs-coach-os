@@ -356,38 +356,18 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
         <div class="card">
           <div class="card-title">📨 Client Weekly Files</div>
           <div style="font-size:13px;color:var(--dim-2);margin-bottom:1.25rem;line-height:1.7">
-            When clients send you their weekly file upload it here. Their compliance scores, workout logs, RPE data, and wellness scores will be saved directly into their profile.
+            When a client taps <strong style="color:var(--gold)">Send via Link</strong> in their portal, paste their sync code here to import the week. Their compliance scores, workout logs, RPE data, and wellness scores save straight into their profile — view them under <strong>Check-ins</strong> on the client's page.
           </div>
-
-          <!-- Drop zone -->
-          <div id="weeklyDropZone" style="border:2px dashed rgba(201,162,39,.35);border-radius:14px;padding:32px 20px;text-align:center;cursor:pointer;transition:all .2s;margin-bottom:1.25rem;background:rgba(201,162,39,.03)"
-            onclick="document.getElementById('weeklyFileInput').click()"
-            ondragover="event.preventDefault();this.style.borderColor='var(--gold)'"
-            ondragleave="this.style.borderColor='rgba(201,162,39,.35)'"
-            ondrop="handleWeeklyDrop(event)">
-            <div style="font-size:32px;margin-bottom:10px">📨</div>
-            <div style="font-family:Barlow Condensed,sans-serif;font-size:16px;font-weight:700;letter-spacing:.06em;color:var(--gold);margin-bottom:6px">TAP TO UPLOAD CLIENT WEEK</div>
-            <div style="font-size:12px;color:var(--dim)">Or drag and drop · Accepts .json files from client portal</div>
-          </div>
-          <input type="file" id="weeklyFileInput" accept=".json" style="display:none" multiple onchange="processWeeklyFiles(this.files)">
 
           <!-- Paste sync code (link-based client sync) -->
           <div style="margin-bottom:1.25rem">
-            <div style="font-size:12px;color:var(--dim);margin-bottom:8px;line-height:1.6">Or paste a client's sync code (they tap "Send via Link" in their portal):</div>
+            <div style="font-size:12px;color:var(--dim);margin-bottom:8px;line-height:1.6">Paste the client's sync code:</div>
             <textarea id="importCodeInput" placeholder="Paste client sync code…" style="width:100%;background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;padding:10px;color:var(--white);font-family:monospace;font-size:12px;min-height:44px;resize:none;outline:none;margin-bottom:8px"></textarea>
             <button onclick="importClientWeekById(document.getElementById('importCodeInput').value)" style="width:100%;padding:13px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:16px;letter-spacing:.08em;cursor:pointer">⬇ Import From Code</button>
           </div>
 
-          <!-- Results -->
+          <!-- Import confirmation -->
           <div id="weeklyResults"></div>
-        </div>
-
-        <!-- Processed weeks log -->
-        <div class="card">
-          <div class="card-title">Recent Uploads</div>
-          <div id="weeklyLog">
-            <div style="font-size:13px;color:var(--dim);padding:.5rem 0">No files uploaded yet this session.</div>
-          </div>
         </div>
       </div>
 
@@ -824,19 +804,12 @@ const pageTitles = {
 };
 
 // ══════════════════════════════════════════════════════════════════
-// WEEKLY CLIENT FILE UPLOAD
+// WEEKLY CLIENT IMPORT (link/sync-code intake)
 // ══════════════════════════════════════════════════════════════════
-function handleWeeklyDrop(event) {
-  event.preventDefault();
-  document.getElementById('weeklyDropZone').style.borderColor = 'rgba(201,162,39,.35)';
-  const files = event.dataTransfer.files;
-  if (files.length) processWeeklyFiles(files);
-}
-
 // Merge one client weekly payload into the OS. Match by stable client id,
 // idempotent per weekKey, never create a client, never touch coach-entered
 // fields (writes only weeklyData + lastSeen). Returns an outcome object.
-// Shared by the file-upload path and the link-pull path.
+// Used by the link-pull path (paste code + tapped ?import= link).
 function mergeClientWeek(data) {
   if (!data || !data.clientId || !data.weekKey) {
     return { success: false, msg: 'Not a valid client week file' };
@@ -878,65 +851,39 @@ function mergeClientWeek(data) {
   };
 }
 
-function processWeeklyFiles(files) {
-  const results = document.getElementById('weeklyResults');
-  const log = document.getElementById('weeklyLog');
-  results.innerHTML = '<div style="font-size:12px;color:var(--dim);margin-bottom:12px">Processing ' + files.length + ' file' + (files.length !== 1 ? 's' : '') + '...</div>';
-
-  let processed = 0;
-  const outcomes = [];
-
-  Array.from(files).forEach(file => {
-    if (!file.name.endsWith('.json')) {
-      outcomes.push({ name: file.name, success: false, msg: 'Not a JSON file' });
-      processed++;
-      if (processed === files.length) renderWeeklyResults(outcomes, log, results);
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      try {
-        const data = JSON.parse(e.target.result);
-        const outcome = mergeClientWeek(data);
-        outcome.name = file.name;
-        outcomes.push(outcome);
-      } catch(err) {
-        outcomes.push({ name: file.name, success: false, msg: 'Could not read file — ' + err.message });
-      }
-
-      processed++;
-      if (processed === files.length) renderWeeklyResults(outcomes, log, results);
-    };
-    reader.readAsText(file);
-  });
-}
-
 // Pull a client's weekly payload from the Worker by sync code/id and merge it
-// through the same mergeClientWeek path as file upload.
+// through the shared mergeClientWeek path.
 async function importClientWeekById(id) {
   id = (id || '').trim();
   if (!id) { toast('Paste a client sync code first'); return; }
+  const results = document.getElementById('weeklyResults');
+  const errCard = msg => `<div style="background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.2);border-radius:10px;padding:14px 16px">
+      <div style="font-size:13px;color:var(--red)">❌ Import failed</div>
+      <div style="font-size:12px;color:var(--dim);margin-top:3px">${msg}</div>
+    </div>`;
   let data;
   try {
     const res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile?id=' + encodeURIComponent(id));
     if (!res.ok) throw new Error('status ' + res.status);
     data = JSON.parse(await res.text());
   } catch(e) {
+    if (results) results.innerHTML = errCard('Could not fetch that sync code — check it and try again');
     toast('Could not fetch that sync code — check it and try again');
     return;
   }
   const outcome = mergeClientWeek(data);
-  outcome.name = 'Sync code ' + id;
-  const results = document.getElementById('weeklyResults');
-  const log = document.getElementById('weeklyLog');
-  if (results && log) renderWeeklyResults([outcome], log, results);
-  let wkLabel = outcome.weekKey ? outcome.weekKey.replace('week-', 'Week of ') : '';
   if (outcome.success) {
     const cc = (db().clients || []).find(x => x.id === data.clientId);
-    if (cc) wkLabel = programWeekLabel(cc, outcome.weekKey);
+    const wkLabel = cc ? programWeekLabel(cc, outcome.weekKey) : (outcome.weekKey || '').replace('week-', 'Week of ');
+    if (results) results.innerHTML = `<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:10px;padding:14px 16px">
+      <div style="font-weight:700;font-size:14px;color:var(--white)">✅ ${outcome.clientName} — ${wkLabel} imported</div>
+      <div style="font-size:12px;color:var(--dim-2);margin-top:5px">View it in their profile → <strong style="color:var(--gold)">Check-ins</strong></div>
+    </div>`;
+    toast(outcome.clientName + ' — ' + wkLabel + ' imported ✓');
+  } else {
+    if (results) results.innerHTML = errCard(outcome.msg);
+    toast('Import failed — ' + outcome.msg);
   }
-  toast(outcome.success ? (outcome.clientName + ' — ' + wkLabel + ' received ✓') : ('Sync failed — ' + outcome.msg));
   const box = document.getElementById('importCodeInput'); if (box) box.value = '';
 }
 
@@ -949,39 +896,6 @@ function autoImportClientWeek() {
   try { history.replaceState(null, '', window.location.pathname); } catch(e) {}
 }
 window.addEventListener('DOMContentLoaded', autoImportClientWeek);
-
-function renderWeeklyResults(outcomes, log, results) {
-  const succeeded = outcomes.filter(o => o.success);
-  const failed = outcomes.filter(o => !o.success);
-
-  results.innerHTML = succeeded.map(o => `
-    <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:10px;padding:12px 14px;margin-bottom:8px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-        <div style="font-weight:700;font-size:13px;color:var(--white)">✅ ${o.clientName}</div>
-        <div style="font-family:Bebas Neue,sans-serif;font-size:20px;color:var(--gold);letter-spacing:.04em">${o.score}<span style="font-size:11px;color:var(--dim)">/49</span></div>
-      </div>
-      <div style="font-size:11px;color:var(--dim-2)">${o.weekKey.replace('week-','Week of ')} · ${o.workoutCount} session${o.workoutCount !== 1 ? 's' : ''} logged · 🔥 ${o.streak} week streak</div>
-    </div>`).join('')
-  + failed.map(o => `
-    <div style="background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.2);border-radius:10px;padding:12px 14px;margin-bottom:8px">
-      <div style="font-size:13px;color:var(--red)">❌ ${o.name}</div>
-      <div style="font-size:11px;color:var(--dim);margin-top:3px">${o.msg}</div>
-    </div>`).join('');
-
-  // Add to log
-  if (succeeded.length) {
-    const existing = log.querySelector('.no-uploads-msg');
-    if (existing) existing.remove();
-    succeeded.forEach(o => {
-      const entry = document.createElement('div');
-      entry.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px';
-      entry.innerHTML = `<div><strong style="color:var(--white)">${o.clientName}</strong> <span style="color:var(--dim)">${o.weekKey.replace('week-','')}</span></div><div style="color:var(--gold);font-family:Bebas Neue,sans-serif;font-size:16px;letter-spacing:.04em">${o.score}/49</div>`;
-      log.prepend(entry);
-    });
-  }
-
-  toast(succeeded.length + ' week' + (succeeded.length !== 1 ? 's' : '') + ' uploaded successfully');
-}
 
 // ══════════════════════════════════════════════════════════════════
 // PSS — PERFORMANCE SCORING SYSTEM
@@ -2864,7 +2778,7 @@ function buildTrendsSection(c) {
   const m = c.measurements || {};
 
   if (!weeks.length && !m.intake) {
-    return '<div class="empty" style="padding:1rem"><div class="empty-text">No trend data yet.<br>Upload weekly files via Client Weeks to see trends.</div></div>';
+    return '<div class="empty" style="padding:1rem"><div class="empty-text">No trend data yet.<br>Trends appear once the client syncs weekly check-ins.</div></div>';
   }
 
   // ── 8-WEEK OUTCOME SUMMARY ─────────────────────────────────────
@@ -2990,7 +2904,7 @@ function buildTrendsSection(c) {
   let html = outcomeSummary();
 
   if (!weeks.length) {
-    html += '<div style="font-size:11px;color:var(--dim);font-style:italic;padding:.5rem 0">Upload weekly files to see trend charts.</div>';
+    html += '<div style="font-size:11px;color:var(--dim);font-style:italic;padding:.5rem 0">Trend charts appear once the client syncs weekly check-ins.</div>';
     return html;
   }
 
@@ -3137,7 +3051,7 @@ function buildTrendsSection(c) {
     </div>`;
   }
 
-  return html || '<div style="font-size:11px;color:var(--dim)">Record measurements and upload weekly files to see trends.</div>';
+  return html || '<div style="font-size:11px;color:var(--dim)">Record measurements and have the client sync weekly check-ins to see trends.</div>';
 }
 
 function editClient(clientId) {
