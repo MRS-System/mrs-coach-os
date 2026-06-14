@@ -354,19 +354,14 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
       <!-- ══ CLIENT WEEKS ══ -->
       <div class="screen" id="screen-weekly-upload">
         <div class="card">
-          <div class="card-title">📨 Client Weekly Files</div>
+          <div class="card-title">📨 Client Check-ins</div>
           <div style="font-size:13px;color:var(--dim-2);margin-bottom:1.25rem;line-height:1.7">
-            When a client taps <strong style="color:var(--gold)">Send via Link</strong> in their portal, paste their sync code here to import the week. Their compliance scores, workout logs, RPE data, and wellness scores save straight into their profile — view them under <strong>Check-ins</strong> on the client's page.
+            When a client taps <strong style="color:var(--gold)">Send to Coach</strong> in their portal, their week lands in their cloud mailbox. The OS checks every mailbox automatically each time it loads — new check-ins import straight into each client's profile and light up the <strong>{n} new</strong> badge. Tap below to check again now.
           </div>
 
-          <!-- Paste sync code (link-based client sync) -->
-          <div style="margin-bottom:1.25rem">
-            <div style="font-size:12px;color:var(--dim);margin-bottom:8px;line-height:1.6">Paste the client's sync code:</div>
-            <textarea id="importCodeInput" placeholder="Paste client sync code…" style="width:100%;background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;padding:10px;color:var(--white);font-family:monospace;font-size:12px;min-height:44px;resize:none;outline:none;margin-bottom:8px"></textarea>
-            <button onclick="importClientWeekById(document.getElementById('importCodeInput').value)" style="width:100%;padding:13px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:16px;letter-spacing:.08em;cursor:pointer">⬇ Import From Code</button>
-          </div>
+          <button onclick="sweepInboxes({manual:true})" style="width:100%;padding:13px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:16px;letter-spacing:.08em;cursor:pointer;margin-bottom:1.25rem">🔄 Check for new check-ins</button>
 
-          <!-- Import confirmation -->
+          <!-- Sweep summary -->
           <div id="weeklyResults"></div>
         </div>
       </div>
@@ -851,51 +846,48 @@ function mergeClientWeek(data) {
   };
 }
 
-// Pull a client's weekly payload from the Worker by sync code/id and merge it
-// through the shared mergeClientWeek path.
-async function importClientWeekById(id) {
-  id = (id || '').trim();
-  if (!id) { toast('Paste a client sync code first'); return; }
+// Sweep every client's cloud mailbox: GET /inbox?clientId= returns queued
+// weekly payloads (and clears the mailbox server-side), then mergeClientWeek
+// folds each into the OS. mergeClientWeek is idempotent per weekKey, so a
+// re-sweep can never duplicate a week. Runs on load (separate DOMContentLoaded
+// listener — init untouched) and from the "Check for new check-ins" button.
+async function sweepInboxes(opts) {
+  const manual = opts && opts.manual;
   const results = document.getElementById('weeklyResults');
-  const errCard = msg => `<div style="background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.2);border-radius:10px;padding:14px 16px">
-      <div style="font-size:13px;color:var(--red)">❌ Import failed</div>
-      <div style="font-size:12px;color:var(--dim);margin-top:3px">${msg}</div>
-    </div>`;
-  let data;
-  try {
-    const res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile?id=' + encodeURIComponent(id));
-    if (!res.ok) throw new Error('status ' + res.status);
-    data = JSON.parse(await res.text());
-  } catch(e) {
-    if (results) results.innerHTML = errCard('Could not fetch that sync code — check it and try again');
-    toast('Could not fetch that sync code — check it and try again');
+  const clients = (db().clients || []);
+  if (!clients.length) {
+    if (manual && results) results.innerHTML = '<div style="font-size:12px;color:var(--dim);padding:.5rem 0">No clients yet — add a client first.</div>';
     return;
   }
-  const outcome = mergeClientWeek(data);
-  if (outcome.success) {
-    const cc = (db().clients || []).find(x => x.id === data.clientId);
-    const wkLabel = cc ? programWeekLabel(cc, outcome.weekKey) : (outcome.weekKey || '').replace('week-', 'Week of ');
-    if (results) results.innerHTML = `<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:10px;padding:14px 16px">
-      <div style="font-weight:700;font-size:14px;color:var(--white)">✅ ${outcome.clientName} — ${wkLabel} imported</div>
-      <div style="font-size:12px;color:var(--dim-2);margin-top:5px">View it in their profile → <strong style="color:var(--gold)">Check-ins</strong></div>
-    </div>`;
-    toast(outcome.clientName + ' — ' + wkLabel + ' imported ✓');
-  } else {
-    if (results) results.innerHTML = errCard(outcome.msg);
-    toast('Import failed — ' + outcome.msg);
-  }
-  const box = document.getElementById('importCodeInput'); if (box) box.value = '';
-}
+  if (manual && results) results.innerHTML = '<div style="font-size:12px;color:var(--dim);padding:.5rem 0">Checking ' + clients.length + ' mailbox' + (clients.length !== 1 ? 'es' : '') + '…</div>';
 
-// Tapped link support: index.html?import=<id> auto-imports on load via a
-// SEPARATE listener (init is untouched).
-function autoImportClientWeek() {
-  const id = new URLSearchParams(window.location.search).get('import');
-  if (!id) return;
-  importClientWeekById(id);
-  try { history.replaceState(null, '', window.location.pathname); } catch(e) {}
+  let imported = 0;
+  const names = [];
+  await Promise.all(clients.map(async c => {
+    try {
+      const res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/inbox?clientId=' + encodeURIComponent(c.id));
+      if (!res.ok) return;
+      const data = await res.json();
+      const items = (data && data.items) || [];
+      items.forEach(payload => {
+        const outcome = mergeClientWeek(payload);
+        if (outcome.success) { imported++; if (!names.includes(outcome.clientName)) names.push(outcome.clientName); }
+      });
+    } catch(e) { /* one mailbox failing must not abort the rest */ }
+  }));
+
+  if (imported > 0) {
+    renderDashboard(); // refresh "{n} new" badges (sweep finishes after init's first paint)
+    if (results) results.innerHTML = `<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:10px;padding:14px 16px">
+      <div style="font-weight:700;font-size:14px;color:var(--white)">✅ ${imported} new check-in${imported !== 1 ? 's' : ''} imported</div>
+      <div style="font-size:12px;color:var(--dim-2);margin-top:5px">From ${names.join(', ')} — view under <strong style="color:var(--gold)">Check-ins</strong> on each profile.</div>
+    </div>`;
+    toast(imported + ' new check-in' + (imported !== 1 ? 's' : '') + ' imported ✓');
+  } else if (manual && results) {
+    results.innerHTML = '<div style="font-size:12px;color:var(--dim);padding:.5rem 0">No new check-ins right now.</div>';
+  }
 }
-window.addEventListener('DOMContentLoaded', autoImportClientWeek);
+window.addEventListener('DOMContentLoaded', () => sweepInboxes());
 
 // ══════════════════════════════════════════════════════════════════
 // PSS — PERFORMANCE SCORING SYSTEM

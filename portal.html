@@ -1722,7 +1722,7 @@ input[type=range]::-moz-range-thumb {
       <!-- Section 2: Send Week -->
       <div class="coach-section">
         <div class="coach-section-title">📤 Send My Week to Coach</div>
-        <div class="coach-section-sub">Downloads your weekly check-in. Text or WhatsApp the file to your coach every Sunday.</div>
+        <div class="coach-section-sub">Sends your weekly check-in straight to your coach. Tap once every Sunday — nothing to download or paste.</div>
         <div class="week-score-preview">
           <div>
             <div class="wsp-label">This Week's Score</div>
@@ -1730,11 +1730,8 @@ input[type=range]::-moz-range-thumb {
           </div>
           <div class="wsp-score" id="coachTabScore">—</div>
         </div>
-        <button class="send-week-btn" onclick="sendToCoach()">
-          📤 Send Week to Coach
-        </button>
-        <button class="send-week-btn" style="margin-top:8px;background:var(--black3);color:var(--gold);border:1px solid var(--border2)" onclick="sendToCoachViaLink()">
-          🔗 Send via Link (no file)
+        <button class="send-week-btn" onclick="sendWeekToInbox()">
+          📤 Send to Coach
         </button>
         <div id="sendLinkStatus" style="font-size:11px;color:var(--dim2);margin-top:8px;line-height:1.6"></div>
       </div>
@@ -2092,7 +2089,7 @@ function checkSundayPrompt(){
 }
 function sundaySend(){
   document.getElementById('sundayOverlay').classList.remove('show');
-  sendToCoach();
+  sendWeekToInbox();
 }
 function sundaySkip(){
   const pdb=portalDb();
@@ -2786,10 +2783,9 @@ function markSessionDone(sessionId) {
   showToast('Session logged!');
 }
 
-// ── Updated sendToCoach with slot and meal data ───────
-// Build the weekly check-in payload. Shared by sendToCoach (file download)
-// and sendToCoachViaLink (Worker upload). Payload assembly is verbatim from
-// the original sendToCoach — no logic change.
+// Build the weekly check-in payload (compliance scores, workout logs, RPE,
+// wellness, meal scans). Consumed by sendWeekToInbox, which drops it into the
+// client's cloud mailbox for the coach OS to sweep.
 function buildWeeklyPayload() {
   const pdb = portalDb(), scores = calcWeekScore(), wk = weekKey();
   const days = getWeekDays();
@@ -2820,36 +2816,25 @@ function buildWeeklyPayload() {
     workoutLogs, slotLogs, mealScans, avgNutriScore};
 }
 
-function sendToCoach() {
-  const payload = buildWeeklyPayload();
-  const wk = payload.weekKey;
-  const blob = new Blob([JSON.stringify(payload,null,2)], {type:'application/json'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'MRS_Weekly_' + (client?.name||'client').replace(/\s+/g,'_') + '_' + wk + '.json';
-  a.click(); URL.revokeObjectURL(url);
-  showToast('File downloaded — send to your coach');
-}
-
-// Reverse sync: POST the same weekly payload to the Worker and surface a short
-// code the client sends to their coach (coach pulls it via GET /profile).
-async function sendToCoachViaLink() {
+// Mailbox send: POST the weekly payload to the client's fixed cloud mailbox
+// (keyed by client id). The coach OS sweeps all mailboxes on load and imports
+// anything new. Replaces the old file-download and paste-code flows.
+async function sendWeekToInbox() {
   const statusEl = document.getElementById('sendLinkStatus');
-  if (statusEl) statusEl.textContent = 'Generating your sync code…';
+  if (statusEl) statusEl.textContent = 'Sending to your coach…';
   try {
     const payload = buildWeeklyPayload();
-    const res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    if (!payload.clientId) throw new Error('no client id');
+    const res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/inbox', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId: payload.clientId, payload })
     });
     if (!res.ok) throw new Error('status ' + res.status);
-    const data = await res.json();
-    if (!data || !data.id) throw new Error('no id');
-    if (navigator.clipboard) { try { await navigator.clipboard.writeText(data.id); } catch(e) {} }
-    if (statusEl) statusEl.textContent = 'Sync code copied: ' + data.id + ' — send it to your coach.';
-    showToast('Sync code ' + data.id + ' copied — send to your coach');
+    if (statusEl) statusEl.textContent = 'Sent ✓ — your coach will see it on their next check.';
+    showToast('Sent to your coach ✓');
   } catch(e) {
-    if (statusEl) statusEl.textContent = 'Could not generate a sync code — use the file download instead.';
-    showToast('Sync failed — use the file download instead', 'var(--red)');
+    if (statusEl) statusEl.textContent = 'Could not send — check your connection and try again.';
+    showToast('Send failed — try again', 'var(--red)');
   }
 }
 
