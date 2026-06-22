@@ -1251,15 +1251,9 @@ function renderDashboard() {
   const totalPrograms = clients.reduce((acc, c) => acc + (c.programs || []).length, 0);
   const activeClients = clients.filter(c => (c.programs || []).length > 0).length;
 
-  // Compliance rate across all clients
-  let totalSess = 0, doneSess = 0;
-  clients.forEach(c => {
-    (c.compliance||[]).forEach(w => {
-      totalSess += w.sessions.length;
-      doneSess += w.sessions.filter(Boolean).length;
-    });
-  });
-  const complianceRate = totalSess > 0 ? Math.round(doneSess/totalSess*100) : null;
+  // Compliance rate across all clients — mean of per-client adherence
+  const compVals = clients.map(c => computeCompliance(c)).filter(v => v !== null);
+  const complianceRate = compVals.length ? Math.round(compVals.reduce((a,v)=>a+v,0)/compVals.length) : null;
   const compColor = complianceRate === null ? 'var(--dim)' : complianceRate >= 80 ? 'var(--green-br)' : complianceRate >= 60 ? 'var(--gold)' : 'var(--red)';
 
   // Pipeline — where are clients in the system
@@ -2762,6 +2756,24 @@ function markCheckinWeekSeen(clientId, weekKey) {
   saveDb(data);
 }
 
+// Real compliance % for one client — single source of truth, same per-week
+// session math the Check-ins card uses: sessions logged (workoutLogs) ÷
+// sessions scheduled (scoreBreakdown.freq), summed only over weeks that have
+// data. Denominator never includes weeks with no data, so a client mid-program
+// with full attendance reads ~100%, not a fraction of 8 weeks. Returns null
+// when there isn't enough data yet, so callers render "—".
+function computeCompliance(c) {
+  const weeks = (c && c.weeklyData) || [];
+  let done = 0, scheduled = 0;
+  weeks.forEach(w => {
+    const freq = (w.scoreBreakdown && w.scoreBreakdown.freq) || 0;
+    scheduled += freq;
+    done += (w.workoutLogs || []).length;
+  });
+  if (scheduled <= 0) return null;
+  return Math.round(Math.min(done, scheduled) / scheduled * 100);
+}
+
 // ══════════════════════════════════════════════════════════════════
 // CLIENT TRENDS — weekly data visualization
 // ══════════════════════════════════════════════════════════════════
@@ -3222,7 +3234,6 @@ function printProgressReport(clientId) {
   if (!c) return;
 
   const m = c.measurements || {};
-  const compliance = c.compliance || [];
   const em = {
     intake: enrichRecord(m.intake),
     week4:  enrichRecord(m.week4),
@@ -3230,9 +3241,10 @@ function printProgressReport(clientId) {
   };
 
   const hasData = em.intake || em.week4 || em.week8;
-  const totalSess = compliance.reduce((a,w)=>a+w.sessions.length,0);
-  const doneSess  = compliance.reduce((a,w)=>a+w.sessions.filter(Boolean).length,0);
-  const compliancePct = totalSess > 0 ? Math.round(doneSess/totalSess*100) : null;
+  const cw = c.weeklyData || [];
+  const totalSess = cw.reduce((a,w)=>a+((w.scoreBreakdown&&w.scoreBreakdown.freq)||0),0);
+  const doneSess  = cw.reduce((a,w)=>a+(w.workoutLogs||[]).length,0);
+  const compliancePct = computeCompliance(c);
   const latest = em.week8 || em.week4;
 
   function pct(from, to, lowerBetter) {
@@ -3697,12 +3709,8 @@ function renderAnalytics() {
   const completionRate = hasIntake > 0 ? Math.round(hasWeek8/hasIntake*100) : 0;
   const totalPrograms = clients.reduce((a,c) => a+(c.programs||[]).length, 0);
 
-  let totalSess = 0, doneSess = 0;
-  clients.forEach(c => (c.compliance||[]).forEach(w => {
-    totalSess += w.sessions.length;
-    doneSess += w.sessions.filter(Boolean).length;
-  }));
-  const complianceRate = totalSess > 0 ? Math.round(doneSess/totalSess*100) : null;
+  const compVals = clients.map(c => computeCompliance(c)).filter(v => v !== null);
+  const complianceRate = compVals.length ? Math.round(compVals.reduce((a,v)=>a+v,0)/compVals.length) : null;
   const compColor = complianceRate === null ? 'var(--dim)' : complianceRate >= 80 ? 'var(--green-br)' : complianceRate >= 60 ? 'var(--gold)' : 'var(--red)';
 
   const now = Date.now();
