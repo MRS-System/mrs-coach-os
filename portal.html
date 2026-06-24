@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=15 -->
+<!-- portal cache-buster v=16 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -878,7 +878,7 @@ input[type=range]::-moz-range-thumb {
   font-size: 13px;
   font-weight: 600;
   color: var(--green);
-  z-index: 200;
+  z-index: 600; /* above the NutriReader overlay (z-index 500) so nudges are readable */
   opacity: 0;
   transition: all .3s;
   white-space: nowrap;
@@ -1838,12 +1838,12 @@ input[type=range]::-moz-range-thumb {
 
     <label style="display:block;width:100%;padding:18px;background:var(--gold);border:none;border-radius:14px;color:var(--black);font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:.1em;cursor:pointer;text-align:center;margin-bottom:10px">
       📸 Take Photo
-      <input type="file" accept="image/*" capture="environment" id="nrImageInput" style="display:none" onchange="handleNRPhoto(this)">
+      <input type="file" accept="image/*" capture="environment" id="nrImageInput" style="display:none" onclick="return nrGate(event)" onchange="handleNRPhoto(this)">
     </label>
 
     <label style="display:block;width:100%;padding:14px;background:var(--black3);border:1px solid var(--border2);border-radius:12px;color:var(--dim2);font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:pointer;text-align:center">
       🖼️ Choose from Library
-      <input type="file" accept="image/*" id="nrImageLibrary" style="display:none" onchange="handleNRPhoto(this)">
+      <input type="file" accept="image/*" id="nrImageLibrary" style="display:none" onclick="return nrGate(event)" onchange="handleNRPhoto(this)">
     </label>
   </div>
 
@@ -2621,10 +2621,27 @@ async function resizeImageForUpload(file) {
   return canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
 }
 
+// Picker gate: the meal description is required, so block Take Photo / Choose
+// from Library from opening the OS picker at all when nrContext is empty. The
+// inputs are label-wrapped, so calling preventDefault() on the input's click
+// (forwarded from the label tap) stops the camera/library from opening before
+// the user has typed what's on the plate. Returns false to also cancel the
+// default via the inline onclick handler.
+function nrGate(event) {
+  if (!document.getElementById('nrContext').value.trim()) {
+    if (event && event.preventDefault) event.preventDefault();
+    showToast("Tell me what's on the plate first");
+    return false;
+  }
+  return true;
+}
+
 function handleNRPhoto(input) {
   const file = input.files[0];
   if (!file) return;
-  // Description is required: the photo estimates portions of the named foods.
+  // Backstop: description is required (the photo estimates portions of the
+  // named foods). nrGate blocks the picker up front; this guards any path that
+  // still reaches here without a description.
   if (!document.getElementById('nrContext').value.trim()) {
     showToast("Tell me what's on the plate first");
     input.value = '';
