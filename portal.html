@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- portal cache-buster v=15 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1819,7 +1820,7 @@ input[type=range]::-moz-range-thumb {
     </div>
 
     <div style="margin-bottom:12px">
-      <div style="font-size:11px;font-weight:700;color:var(--dim2);margin-bottom:6px;font-family:'Barlow Condensed',sans-serif;letter-spacing:.08em;text-transform:uppercase">What is this meal? (optional)</div>
+      <div style="font-size:11px;font-weight:700;color:var(--dim2);margin-bottom:6px;font-family:'Barlow Condensed',sans-serif;letter-spacing:.08em;text-transform:uppercase">What is this meal? <span style="color:var(--gold)">*</span></div>
       <input type="text" id="nrContext" placeholder="e.g. grilled chicken bowl, Chipotle burrito, post-workout shake..."
         style="width:100%;background:var(--black3);border:1px solid var(--border2);border-radius:10px;padding:12px 14px;color:var(--white);font-family:Barlow,sans-serif;font-size:13px;outline:none">
     </div>
@@ -2623,6 +2624,12 @@ async function resizeImageForUpload(file) {
 function handleNRPhoto(input) {
   const file = input.files[0];
   if (!file) return;
+  // Description is required: the photo estimates portions of the named foods.
+  if (!document.getElementById('nrContext').value.trim()) {
+    showToast("Tell me what's on the plate first");
+    input.value = '';
+    return;
+  }
   document.getElementById('nrProtocol').style.display = 'none';
   document.getElementById('nrLoading').style.display = 'flex';
   document.getElementById('nrLoading').style.flexDirection = 'column';
