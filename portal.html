@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=16 -->
+<!-- portal cache-buster v=17 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2568,6 +2568,7 @@ function loadProfileFromCode() {
 // ── NutriReader ───────────────────────────────────────
 let nrTiming = 'meal';
 let nrPendingResult = null;
+let nrPendingThumb = null;
 
 function setNRTiming(t) {
   nrTiming = t;
@@ -2662,6 +2663,11 @@ function handleNRPhoto(input) {
     const bodyweight = client?.intake?.weight || '';
     try {
       const base64 = await resizeImageForUpload(file);
+      // Best-effort thumbnail capture for meal history (Step 1). Fire-and-forget:
+      // never block or alter the scan call. If it isn't ready by log time, the
+      // meal saves without it.
+      nrPendingThumb = null;
+      makeThumbnail(file).then(t => { nrPendingThumb = t; }).catch(() => {});
       const result = await callNutriReaderAPI(base64, 'image/jpeg', context, timing, goal, avatar, bodyweight);
       clearInterval(msgInterval);
       displayNRResult(result, context, timing);
@@ -2723,19 +2729,83 @@ function logNRMeal() {
   if (!pdb.checkins) pdb.checkins = {};
   if (!pdb.checkins[today]) pdb.checkins[today] = {};
   if (!pdb.checkins[today].meals) pdb.checkins[today].meals = [];
-  pdb.checkins[today].meals.push({ts:Date.now(),score,macros,context,timing,proteinVerdict});
+  const mealEntry = {ts:Date.now(),score,macros,context,timing,proteinVerdict,thumb: nrPendingThumb || null};
+  pdb.checkins[today].meals.push(mealEntry);
+  nrPendingThumb = null;
   if (proteinVerdict === 'high') {
     const totalProtein = pdb.checkins[today].meals.reduce((s,m) => s+(m.macros?.protein||0), 0);
     const bw = parseFloat(client?.intake?.weight||0);
     if (bw > 0 && totalProtein >= bw * 0.75) pdb.checkins[today].protein = 'yes';
   }
   pdb.checkins[today].ts = Date.now();
-  savePortalDb(pdb);
+  // Drop thumbnails older than 30 days before writing (macros/score persist forever).
+  pruneNRThumbs(pdb);
+  // Guarded write: if the thumbnail pushes us over the localStorage quota, drop
+  // only this meal's photo and fall back to the normal (thumb-less) save so the
+  // macros are never lost.
+  try {
+    savePortalDbGuarded(pdb);
+  } catch (e) {
+    mealEntry.thumb = null;
+    savePortalDb(pdb);
+    showToast('Photo too large to save — meal logged without the photo.', 'var(--gold)');
+  }
   nrPendingResult = null;
   closeNutriReader();
   renderTodayChecklist();
   renderNRDailyLog();
   showToast('Meal logged · Score: ' + score + '/10');
+}
+
+// ── Meal-history thumbnail helpers (Step 1) ───────────────
+// Small JPEG data URI for the meal-history view. Long edge capped at 200px,
+// quality 0.5 → typically ~5–15KB. Best-effort: resolves null on any failure
+// so it can never throw into the scan flow.
+function makeThumbnail(imageSource) {
+  return new Promise(resolve => {
+    try {
+      const url = URL.createObjectURL(imageSource);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const MAX_EDGE = 200;
+          const scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height));
+          const cw = Math.max(1, Math.round(img.width * scale));
+          const ch = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = cw; canvas.height = ch;
+          canvas.getContext('2d').drawImage(img, 0, 0, cw, ch);
+          URL.revokeObjectURL(url);
+          resolve(canvas.toDataURL('image/jpeg', 0.5));
+        } catch (e) { URL.revokeObjectURL(url); resolve(null); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+      img.src = url;
+    } catch (e) { resolve(null); }
+  });
+}
+
+// Delete .thumb from any meal on a day-key older than 30 days. Uses the same
+// YYYY-MM-DD key format as todayKey(). Macros/score/context/timing are untouched
+// and persist forever; only the photo is aged out to protect the storage budget.
+function pruneNRThumbs(pdb) {
+  if (!pdb || !pdb.checkins) return;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 30);
+  const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth()+1).padStart(2,'0')}-${String(cutoff.getDate()).padStart(2,'0')}`;
+  Object.keys(pdb.checkins).forEach(dayKey => {
+    if (dayKey >= cutoffKey) return;
+    const meals = pdb.checkins[dayKey]?.meals;
+    if (!Array.isArray(meals)) return;
+    meals.forEach(m => { if (m && m.thumb != null) delete m.thumb; });
+  });
+}
+
+// Same write as savePortalDb, but does NOT swallow errors — re-throws so the
+// caller can detect a QuotaExceededError and fall back. Used only on the
+// thumbnail-bearing write path; the shared savePortalDb is left untouched.
+function savePortalDbGuarded(pdb) {
+  localStorage.setItem(CLIENT_DB_KEY, JSON.stringify(pdb));
 }
 
 function renderNRDailyLog() {
