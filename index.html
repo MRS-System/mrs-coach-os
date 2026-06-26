@@ -2410,7 +2410,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=18';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=19';
 }
 
 function exportClient(clientId) {
@@ -2418,7 +2418,7 @@ function exportClient(clientId) {
   var c = (database.clients || []).find(function(x){ return x.id === clientId; });
   if (!c) { toast("Client not found"); return; }
 
-  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=18";
+  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=19";
 
   var profileData = {
     id: c.id, name: c.name, age: c.age||"", gender: c.gender||"M",
@@ -2627,7 +2627,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=18',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=19',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -2661,6 +2661,72 @@ function programWeekLabel(c, weekKey) {
   return 'Week ' + weekNum + ' of 8';
 }
 
+// Coach-side score->color, same thresholds the client history uses, mapped to
+// the coach palette. New sibling so no protected/shared function is touched.
+function coachScoreColor(score) {
+  return score >= 8 ? 'var(--green-br)' : score >= 6 ? 'var(--gold)' : 'var(--red)';
+}
+
+// Step 3 — coach-facing expandable meal history. Given a received week's
+// day-keyed mealScans, render collapsed daily group rows (newest day first):
+// date, meal count, day avg score. Each row toggles open to reveal that day's
+// meals — the Step-1 thumbnail (or a clean "No photo" placeholder), plus score,
+// description, time-of-day, and macros. Read-only: writes nothing.
+function renderCoachMealHistory(mealScans, idBase) {
+  const scans = mealScans || {};
+  const dayKeys = Object.keys(scans)
+    .filter(function(k){ const m = scans[k]; return Array.isArray(m) && m.length; })
+    .sort().reverse();
+  if (!dayKeys.length) return '<div style="font-size:11px;color:var(--dim);font-style:italic">No meal scans</div>';
+  return dayKeys.map(function(dk){
+    const meals = scans[dk];
+    const dayId = idBase + '-md-' + dk;
+    const dn = new Date(dk + 'T00:00').toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'});
+    const avg = Math.round(meals.reduce(function(s,m){return s+(m.score||0);}, 0) / meals.length);
+    const dayColor = coachScoreColor(avg);
+    const rows = meals.map(function(m,i){
+      const c = coachScoreColor(m.score||0);
+      const time = m.ts ? new Date(m.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+      const macros = m.macros || {};
+      const thumb = m.thumb
+        ? '<img src="' + m.thumb + '" alt="meal" style="width:46px;height:46px;border-radius:8px;object-fit:cover;flex-shrink:0;border:1px solid var(--border)">'
+        : '<div style="width:46px;height:46px;border-radius:8px;flex-shrink:0;background:var(--black-4);border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--dim);font-size:8px;gap:1px"><span style="font-size:14px">🍽️</span><span>No photo</span></div>';
+      const macroLine = [
+        macros.protein != null ? macros.protein + 'g P' : '',
+        macros.carbs != null ? macros.carbs + 'g C' : '',
+        macros.fat != null ? macros.fat + 'g F' : '',
+        macros.calories != null ? macros.calories + ' cal' : ''
+      ].filter(Boolean).join(' · ');
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border)">'
+        + thumb
+        + '<div style="font-family:Bebas Neue,sans-serif;font-size:18px;color:' + c + ';width:24px;text-align:center;flex-shrink:0">' + (m.score != null ? m.score : '?') + '</div>'
+        + '<div style="flex:1;min-width:0">'
+        + '<div style="font-size:11px;color:var(--white);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (m.context || ('Meal ' + (i+1))) + '</div>'
+        + '<div style="font-size:9px;color:var(--dim);margin-top:1px">' + (time ? time + ' · ' : '') + (macroLine || 'macros n/a') + '</div>'
+        + '</div></div>';
+    }).join('');
+    return '<div style="border-top:1px solid var(--border)">'
+      + '<div onclick="toggleCoachMealDay(\'' + dayId + '\')" style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer">'
+      + '<span id="' + dayId + '-caret" style="color:var(--dim);font-size:10px;flex-shrink:0">▸</span>'
+      + '<span style="font-size:11px;color:var(--dim-2);flex:1">' + dn + '</span>'
+      + '<span style="font-size:10px;color:var(--dim)">' + meals.length + ' meal' + (meals.length!==1?'s':'') + '</span>'
+      + '<span style="font-family:Bebas Neue,sans-serif;font-size:15px;color:' + dayColor + ';margin-left:6px">' + avg + '<span style="font-size:9px;color:var(--dim)">/10</span></span>'
+      + '</div>'
+      + '<div id="' + dayId + '-detail" style="display:none;padding:0 0 6px 16px">' + rows + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+// Pure client-side expand/collapse of one day's meals — no storage write.
+function toggleCoachMealDay(dayId) {
+  const detail = document.getElementById(dayId + '-detail');
+  const caret = document.getElementById(dayId + '-caret');
+  if (!detail) return;
+  const opening = detail.style.display === 'none';
+  detail.style.display = opening ? 'block' : 'none';
+  if (caret) caret.textContent = opening ? '▾' : '▸';
+}
+
 // The Check-ins card: one row per received week (newest first), each with a
 // program-week label, score, sessions done, receipt date + streak, an unread
 // dot, and tap-to-expand session/meal/breakdown detail. Empty -> no card.
@@ -2681,13 +2747,7 @@ function buildCheckinsPanel(c) {
     }).join('') : '<div style="font-size:11px;color:var(--dim);font-style:italic">No sessions logged</div>';
 
     const scans = w.mealScans || {};
-    const scanDays = Object.keys(scans).sort();
-    const mealsHtml = scanDays.length ? scanDays.map(dk => {
-      const meals = scans[dk] || [];
-      const dn = new Date(dk + 'T00:00').toLocaleDateString('en-US', {weekday:'short'});
-      const avg = meals.length ? Math.round(meals.reduce((s, m) => s + (m.score || 0), 0) / meals.length) : 0;
-      return `<span style="font-size:11px;color:var(--dim-2);margin-right:10px">${dn} ${avg}/10</span>`;
-    }).join('') : '<div style="font-size:11px;color:var(--dim);font-style:italic">No meal scans</div>';
+    const mealsHtml = renderCoachMealHistory(scans, rowId);
 
     const sb = w.scoreBreakdown || {};
     const chips = [['P',sb.protein],['W',sb.water],['Wk',sb.workoutScore],['E',sb.energyScore],['Sl',sb.sleepScore],['St',sb.stressScore],['N',sb.nutritionScore]]
@@ -3663,7 +3723,7 @@ function printProgressReport(clientId) {
 
     // Footer with QR code
     +(function(){
-      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=18';
+      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=19';
       const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data='+encodeURIComponent(portalUrl)+'&bgcolor=0f0f0c&color=c9a227&format=png';
       return '<div class="footer-bar" style="display:flex;align-items:center;justify-content:space-between;gap:16px">'
         +'<div>'
