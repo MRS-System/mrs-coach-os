@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=20 -->
+<!-- portal cache-buster v=21 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2541,7 +2541,7 @@ function goTab(screen,tabId){
   document.getElementById(tabId).classList.add('active');
   if(screen==='score')renderScore();
   if(screen==='progress')renderProgress();
-  if(screen==='program'){renderProgram();renderCorrectiveBlock();}
+  if(screen==='program'){renderProgram();renderCorrectiveBlock();enhanceFinisherSlots();}
   if(screen==='coach')renderCoachTab();
 }
 
@@ -2573,7 +2573,7 @@ function loadProfileFromCode() {
     var el = document.getElementById('profileCodeInput'); if(el) el.value = '';
     var hn = document.getElementById('hdrName'); if(hn) hn.textContent = client.name;
     var ha = document.getElementById('hdrAvatar'); if(ha) ha.textContent = client.avatar + ' · ' + (client.cohort||'1-on-1');
-    renderProfileStatus(); renderProgress(); renderProgram(); renderCorrectiveBlock(); renderCoachTab();
+    renderProfileStatus(); renderProgress(); renderProgram(); renderCorrectiveBlock(); enhanceFinisherSlots(); renderCoachTab();
     showToast('Welcome ' + client.name + '! Profile loaded');
   } catch(e) { showToast('Could not read code. Ask your coach to copy it again.'); }
 }
@@ -2938,6 +2938,94 @@ function getPrevSlotLog(sessionId, slotKey) {
   return null;
 }
 
+// ── Finisher (Slot F) — RPE + brief note (Path B) ─────────
+// Prev lookup for the finisher: mirrors getPrevSlotLog's traversal (earlier
+// session same week, then prior week same session) but accepts a note/rpe log
+// instead of requiring weight/reps. Leaves getPrevSlotLog untouched.
+function getPrevFinisherLog(sessionId, slotKey) {
+  const pdb = portalDb();
+  if (!pdb.slotChecks) return null;
+  const match = sessionId.match(/prog-w(\d+)-s(\d+)/);
+  if (!match) return null;
+  const wk = parseInt(match[1]), sess = parseInt(match[2]);
+  for (let s = sess-1; s >= 1; s--) {
+    const log = pdb.slotChecks['prog-w' + wk + '-s' + s]?.[slotKey + '_log'];
+    if (log && (log.note || log.rpe)) return log;
+  }
+  if (wk > 1) {
+    const log = pdb.slotChecks['prog-w' + (wk-1) + '-s' + sess]?.[slotKey + '_log'];
+    if (log && (log.note || log.rpe)) return log;
+  }
+  return null;
+}
+
+// Persist the finisher as {rpe, note, ts} under the same slot-log key. Schema-
+// additive (adds note); does not touch saveSlotLog or its strength shape.
+function saveFinisherLog(sessionId, slotKey) {
+  const rpeEl = document.getElementById('fin-rpe-' + sessionId + '-' + slotKey);
+  const noteEl = document.getElementById('fin-note-' + sessionId + '-' + slotKey);
+  const rpe = rpeEl ? rpeEl.value.trim() : '';
+  const note = noteEl ? noteEl.value.trim() : '';
+  if (!rpe && !note) return;
+  const pdb = portalDb();
+  if (!pdb.slotChecks) pdb.slotChecks = {};
+  if (!pdb.slotChecks[sessionId]) pdb.slotChecks[sessionId] = {};
+  pdb.slotChecks[sessionId][slotKey + '_log'] = {rpe, note, ts: Date.now()};
+  savePortalDb(pdb);
+}
+
+// Post-render DOM pass (mirrors renderCorrectiveBlock): renderProgram is
+// protected and emits strength inputs for every slot including the finisher.
+// After it runs, swap the finisher card (badge "F") to capture only RPE + a
+// brief note, and show a note-based "Last:" line. Strength slots A–E untouched.
+// renderProgram stays byte-identical.
+function enhanceFinisherSlots() {
+  const cards = document.querySelectorAll('#programContent .prog-slot-card');
+  cards.forEach(function(card){
+    if (card.dataset.finisherEnhanced === '1') return;
+    const badge = card.querySelector('.prog-slot-badge');
+    if (!badge || badge.textContent.trim().toUpperCase() !== 'F') return;
+    // Recover sessionId + slotKey from an existing input id: sle-<sessionId>-<slotKey>
+    const probe = card.querySelector('input[id^="sle-"]');
+    if (!probe) return;
+    const rest = probe.id.slice(4);
+    const cut = rest.lastIndexOf('-');
+    if (cut < 0) return;
+    const sessionId = rest.slice(0, cut);
+    const slotKey = rest.slice(cut + 1);
+    const pdb = portalDb();
+    const log = (pdb.slotChecks && pdb.slotChecks[sessionId] && pdb.slotChecks[sessionId][slotKey + '_log']) || {};
+    // Remove the strength log rows + strength prev line for the finisher only.
+    card.querySelectorAll('.slot-log-row, .slot-prev').forEach(function(n){ n.remove(); });
+    // RPE + Note row. Values are set via JS (not innerHTML) so free-text notes
+    // can't break the markup; handlers bound via closures (no inline strings).
+    const rpeId = 'fin-rpe-' + sessionId + '-' + slotKey;
+    const noteId = 'fin-note-' + sessionId + '-' + slotKey;
+    const row = document.createElement('div');
+    row.className = 'slot-log-row';
+    row.style.alignItems = 'flex-end';
+    row.innerHTML =
+      '<span class="slot-log-group" style="flex:0 0 60px"><span class="slot-log-label">RPE</span>'
+      + '<input class="slot-log-input" type="text" inputmode="decimal" maxlength="4" id="' + rpeId + '" placeholder="1–10"></span>'
+      + '<span class="slot-log-group" style="flex:1"><span class="slot-log-label">What you did</span>'
+      + '<input class="slot-log-input" type="text" id="' + noteId + '" placeholder="e.g. 500m row, 20 cal bike, 5 rounds"></span>';
+    card.appendChild(row);
+    const rpeInput = document.getElementById(rpeId);
+    const noteInput = document.getElementById(noteId);
+    if (rpeInput) { rpeInput.value = log.rpe || ''; rpeInput.addEventListener('change', function(){ saveFinisherLog(sessionId, slotKey); }); }
+    if (noteInput) { noteInput.value = log.note || ''; noteInput.addEventListener('change', function(){ saveFinisherLog(sessionId, slotKey); }); }
+    // Note-based "Last:" line (textContent — never garbage placeholders).
+    const prev = getPrevFinisherLog(sessionId, slotKey);
+    const prevDiv = document.createElement('div');
+    prevDiv.className = 'slot-prev';
+    prevDiv.textContent = prev
+      ? 'Last: ' + (prev.note || '—') + (prev.rpe ? ' @ RPE ' + prev.rpe : '')
+      : 'First time — set the bar';
+    card.appendChild(prevDiv);
+    card.dataset.finisherEnhanced = '1';
+  });
+}
+
 function toggleSlotCheck(sessionId, slotKey, event) {
   event.stopPropagation();
   const pdb = portalDb();
@@ -3013,7 +3101,7 @@ function buildWeeklyPayload() {
       const logs = {};
       Object.entries(checks).forEach(([key, val]) => {
         if (key.endsWith('_log') && val && (val.weight || val.reps || val.rpe || val.sets)) {
-          logs[key.replace('_log','')] = {weight:val.weight, reps:val.reps, unit:val.unit||'lbs', rpe:val.rpe||'', sets:val.sets||'', ts:val.ts};
+          logs[key.replace('_log','')] = {weight:val.weight, reps:val.reps, unit:val.unit||'lbs', rpe:val.rpe||'', sets:val.sets||'', ts:val.ts, note:(val.note||'')};
         }
       });
       if (Object.keys(logs).length) slotLogs[sessId] = logs;
@@ -3118,6 +3206,9 @@ window.addEventListener('load', init);
 // the corrective card, so surface it via a SEPARATE load listener that fires
 // right after init. No-op when there is no corrective section.
 window.addEventListener('load', renderCorrectiveBlock);
+// Finisher (Slot F) capture swap — same post-init load hook as the corrective
+// card, covering init()'s renderProgram() at load. renderProgram unedited.
+window.addEventListener('load', enhanceFinisherSlots);
 
 // One-tap share link (?p=<id>): fetch the stored profile from the Worker and
 // load it through the SAME routine the manual paste flow uses (no duplicated
