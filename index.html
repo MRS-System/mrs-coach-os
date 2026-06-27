@@ -2410,7 +2410,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=19';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=20';
 }
 
 function exportClient(clientId) {
@@ -2418,7 +2418,7 @@ function exportClient(clientId) {
   var c = (database.clients || []).find(function(x){ return x.id === clientId; });
   if (!c) { toast("Client not found"); return; }
 
-  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=19";
+  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=20";
 
   var profileData = {
     id: c.id, name: c.name, age: c.age||"", gender: c.gender||"M",
@@ -2497,34 +2497,8 @@ function exportClient(clientId) {
     '<div class="note">Tap the button above. It will open your portal and install your profile automatically. You only need to do this once.</div>',
     '</body></html>'
   ];
-  // Remove the installer file download — replaced by copy-paste flow
-  // Build slim profile code for copy-paste
-  var slimProfile = {
-    id: c.id, name: c.name, age: c.age||'', gender: c.gender||'M',
-    avatar: c.avatar||'', level: c.level||'', freq: c.freq||'',
-    goal: c.goal||'', flags: c.flags||[], cohort: c.cohort||'',
-    clientType: c.clientType||'1on1', email: c.email||'', phone: c.phone||'',
-    intake: c.intake||{}, measurements: c.measurements||[],
-    programs: (c.programs||[]).map(function(p){
-      return {id:p.id,date:p.date,title:p.title||'',avatar:p.avatar||'',
-              level:p.level||'',freq:p.freq||'',goal:p.goal||'',flags:p.flags||[],
-              block1:p.block1||'',block2:p.block2||'',block1Only:p.block1Only||false};
-    }),
-    activeProgramId: c.activeProgramId||null,
-    nrKey: getNRKey()||'',
-    sessionNotes:[], weeklyData:[], status:'active'
-  };
-  var profileCode = btoa(unescape(encodeURIComponent(JSON.stringify(slimProfile))));
-  var emailSubject = 'Your MRS Portal is Ready';
-  var emailBody = 'Hey ' + c.name + ',\n\nYour MRS portal is ready. Here is how to get set up:\n\n'
-    + 'STEP 1 — Open this link on your phone and save it to your home screen:\n'
-    + portalUrl + '\n\n'
-    + 'STEP 2 — Tap the Coach tab in the portal and paste this profile code:\n\n'
-    + profileCode + '\n\n'
-    + 'Text me when you are set up!';
-  var mailtoLink = 'mailto:' + (c.email||'') + '?subject=' + encodeURIComponent(emailSubject) + '&body=' + encodeURIComponent(emailBody);
-  var smsBody = 'Hey ' + c.name + ' your MRS portal is ready. Open this link and save to your home screen: ' + portalUrl + ' - Then tap Coach tab and paste your profile code. I will send it separately.';
-  var smsLink = 'sms:' + (c.phone||'') + '?body=' + encodeURIComponent(smsBody);
+  // Text + Email share links are built ASYNC below (in the createShareLink
+  // .then) so both carry the auto-loading one-tap ?p= link — no manual paste.
 
   document.getElementById("measureModal").innerHTML =
     '<div style="position:relative;display:flex;flex-direction:column;max-height:88vh;overflow:hidden;border-radius:18px">'
@@ -2534,79 +2508,54 @@ function exportClient(clientId) {
     + '</div>'
     + '<div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain;touch-action:pan-y">'
 
-    + '<div style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;font-family:Barlow Condensed,sans-serif">One-Tap Setup Link</div>'
+    + '<div style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;font-family:Barlow Condensed,sans-serif">Send Auto-Loading Setup Link</div>'
     + '<div id="oneTapLinkStatus" style="background:rgba(201,162,39,.06);border:1px solid rgba(201,162,39,.15);border-radius:8px;padding:11px;font-size:12px;color:var(--dim);margin-bottom:16px">Generating secure link…</div>'
 
-    + '<div style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;font-family:Barlow Condensed,sans-serif">Step 1 — Send Portal Link</div>'
     + (c.email
-      ? '<a href="' + mailtoLink + '" style="display:block;width:100%;padding:13px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:17px;letter-spacing:.1em;cursor:pointer;margin-bottom:8px;text-align:center;text-decoration:none">Email ' + c.name + '</a>'
+      ? '<a id="shareEmailBtn" href="#" aria-disabled="true" style="display:block;width:100%;padding:13px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:17px;letter-spacing:.1em;cursor:default;opacity:.5;pointer-events:none;margin-bottom:8px;text-align:center;text-decoration:none">Email ' + c.name + '</a>'
       : '<div style="background:rgba(201,162,39,.06);border:1px solid rgba(201,162,39,.15);border-radius:8px;padding:10px;font-size:11px;color:var(--dim);margin-bottom:8px">No email on file. Add email in client profile for one-tap send.</div>')
-    + (c.phone ? '<a href="' + smsLink + '" style="display:block;width:100%;padding:11px;background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;color:var(--dim-2);font-family:Barlow Condensed,sans-serif;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:pointer;margin-bottom:8px;text-align:center;text-decoration:none">Text ' + c.name + '</a>' : '')
-    + '<button onclick="copyOnboardMessage(this)" data-name="" data-url="' + portalUrl + '" data-linkonly="1" style="width:100%;padding:11px;background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;color:var(--dim-2);font-family:Barlow Condensed,sans-serif;font-size:13px;font-weight:700;letter-spacing:.08em;cursor:pointer;margin-bottom:16px">Copy Portal Link Only</button>'
-
-    + '<div style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:6px;font-family:Barlow Condensed,sans-serif">Step 2 — Copy Profile Code</div>'
-    + '<div style="font-size:11px;color:var(--dim-2);line-height:1.6;margin-bottom:10px">Client pastes this in the portal under the Coach tab. No file, no download.</div>'
-    + '<button onclick="copyProfileCode(this)" data-code="' + profileCode.substring(0,50) + '___FULL___' + '" style="width:100%;padding:13px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:17px;letter-spacing:.1em;cursor:pointer;margin-bottom:16px" data-full="' + profileCode.replace(/"/g,"&quot;") + '">Copy Profile Code</button>'
+    + (c.phone
+      ? '<a id="shareTextBtn" href="#" aria-disabled="true" style="display:block;width:100%;padding:11px;background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;color:var(--dim-2);font-family:Barlow Condensed,sans-serif;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:default;opacity:.5;pointer-events:none;margin-bottom:16px;text-align:center;text-decoration:none">Text ' + c.name + '</a>'
+      : '<div style="background:rgba(201,162,39,.06);border:1px solid rgba(201,162,39,.15);border-radius:8px;padding:10px;font-size:11px;color:var(--dim);margin-bottom:16px">No phone on file. Add phone in client profile for one-tap text.</div>')
 
     + '<div style="background:rgba(201,162,39,.05);border:1px solid rgba(201,162,39,.12);border-radius:10px;padding:12px;font-size:11px;color:var(--dim-2);line-height:1.8">'
     + '<strong style="color:var(--gold)">Client steps:</strong><br>'
-    + '1. Open portal link on phone, save to home screen<br>'
-    + '2. Tap Coach tab<br>'
-    + '3. Paste the profile code, tap Load<br>'
-    + '4. Profile loads instantly'
+    + '1. Tap the link you send them<br>'
+    + '2. Their portal opens and the program installs automatically<br>'
+    + '3. Save to home screen — done, no code to paste'
     + '</div>'
     + '</div></div>';
 
   document.getElementById("measureModal").classList.add("active");
 
-  // Generate the KV-backed one-tap link asynchronously; manual paste code stays as fallback.
+  // Build the KV-backed one-tap (?p=) link, then point BOTH Text and Email at
+  // it so tapping either auto-loads the program with no manual paste. The two
+  // buttons stay disabled (dimmed, pointer-events:none) until this resolves.
   createShareLink(profileJson).then(function(link){
-    var el = document.getElementById('oneTapLinkStatus');
-    if (el) el.outerHTML = '<button onclick="copyOnboardMessage(this)" data-name="" data-url="' + link + '" data-linkonly="1" style="width:100%;padding:13px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:17px;letter-spacing:.1em;cursor:pointer;margin-bottom:16px">Copy One-Tap Link</button>';
+    var emailSubject = 'Your MRS Portal is Ready';
+    var emailBody = 'Hey ' + c.name + ',\n\nYour MRS portal is ready. Tap this link on your phone — it opens your portal and installs your program automatically:\n\n'
+      + link + '\n\nThen save it to your home screen. That is it — no codes to paste. Text me when you are set up!';
+    var smsBody = 'Hey ' + c.name + ' your MRS portal is ready. Tap to open and auto-install your program: ' + link + ' — then save it to your home screen. No code to paste!';
+    var statusEl = document.getElementById('oneTapLinkStatus');
+    if (statusEl) { statusEl.textContent = 'Secure link ready ✓ — Text or Email it below.'; statusEl.style.color = 'var(--green-br)'; }
+    var emailEl = document.getElementById('shareEmailBtn');
+    if (emailEl) {
+      emailEl.href = 'mailto:' + (c.email||'') + '?subject=' + encodeURIComponent(emailSubject) + '&body=' + encodeURIComponent(emailBody);
+      emailEl.style.opacity = '1'; emailEl.style.pointerEvents = 'auto'; emailEl.style.cursor = 'pointer'; emailEl.removeAttribute('aria-disabled');
+    }
+    var textEl = document.getElementById('shareTextBtn');
+    if (textEl) {
+      textEl.href = 'sms:' + (c.phone||'') + '?body=' + encodeURIComponent(smsBody);
+      textEl.style.opacity = '1'; textEl.style.pointerEvents = 'auto'; textEl.style.cursor = 'pointer'; textEl.removeAttribute('aria-disabled');
+    }
   }).catch(function(){
-    var el = document.getElementById('oneTapLinkStatus');
-    if (el) el.textContent = 'One-tap link unavailable — use the profile code below.';
+    var statusEl = document.getElementById('oneTapLinkStatus');
+    if (statusEl) { statusEl.textContent = 'Could not generate the secure link — check your connection and reopen this dialog.'; statusEl.style.color = 'var(--red)'; }
   });
 }
 
 function closeMeasureModal(){
   document.getElementById('measureModal').classList.remove('active');
-}
-
-function copyProfileCode(btn) {
-  var code = btn.getAttribute('data-full') || btn.getAttribute('data-code') || '';
-  code = code.replace(/&quot;/g, '"');
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(code).then(function(){ toast('Profile code copied — paste in portal Coach tab'); });
-  } else {
-    var ta = document.createElement('textarea');
-    ta.value = code;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    toast('Profile code copied — paste in portal Coach tab');
-  }
-}
-
-function copyOnboardMessage(btn) {
-  var name = btn.getAttribute('data-name');
-  var url = btn.getAttribute('data-url');
-  var linkOnly = btn.getAttribute('data-linkonly');
-  var text = linkOnly
-    ? url
-    : 'Hey ' + name + ' - your MRS portal is ready.\n\n1. Open the setup file I am sending you and tap Install My Profile.\n\n2. Then open this link and save to your home screen:\n' + url + '\n\nText me when you are set up';
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(text).then(function(){ toast(linkOnly ? 'Link copied' : 'Message copied'); });
-  } else {
-    var ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    toast(linkOnly ? 'Link copied' : 'Message copied');
-  }
 }
 
 function exportClientFile(clientId) {
@@ -2627,7 +2576,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=19',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=20',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -3723,7 +3672,7 @@ function printProgressReport(clientId) {
 
     // Footer with QR code
     +(function(){
-      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=19';
+      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=20';
       const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data='+encodeURIComponent(portalUrl)+'&bgcolor=0f0f0c&color=c9a227&format=png';
       return '<div class="footer-bar" style="display:flex;align-items:center;justify-content:space-between;gap:16px">'
         +'<div>'
