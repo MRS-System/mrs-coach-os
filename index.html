@@ -2410,7 +2410,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=21';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=22';
 }
 
 function exportClient(clientId) {
@@ -2418,7 +2418,7 @@ function exportClient(clientId) {
   var c = (database.clients || []).find(function(x){ return x.id === clientId; });
   if (!c) { toast("Client not found"); return; }
 
-  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=21";
+  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=22";
 
   var profileData = {
     id: c.id, name: c.name, age: c.age||"", gender: c.gender||"M",
@@ -2576,7 +2576,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=21',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=22',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -2771,16 +2771,55 @@ function markCheckinWeekSeen(clientId, weekKey) {
 // data. Denominator never includes weeks with no data, so a client mid-program
 // with full attendance reads ~100%, not a fraction of 8 weeks. Returns null
 // when there isn't enough data yet, so callers render "—".
+// Compliance = ATTENDANCE ("did the session happen"), not remembered weights.
+// A session counts as done if it has EITHER a real slot log, a mark-done marker,
+// OR a Today-tab workout log — any one is enough; remembered reps are never
+// required (prevents fabricated data). Counted ONCE per session id no matter how
+// many weekly payloads re-send it (slotLogs ride in full every week — dedupe),
+// and bucketed by PROGRAM week parsed from prog-w{N}-s{M}, never the calendar
+// week it arrived in. scheduled spans weeks 1..maxReachedWeek (future/unreached
+// weeks excluded — the fairness gate), capped per week at the prescribed freq.
 function computeCompliance(c) {
   const weeks = (c && c.weeklyData) || [];
-  let done = 0, scheduled = 0;
+  if (!weeks.length) return null;
+  // Prescribed sessions/week — constant per client; same source as before.
+  let freq = 0;
+  weeks.forEach(w => { const f = (w.scoreBreakdown && w.scoreBreakdown.freq) || 0; if (f > freq) freq = f; });
+  if (freq <= 0) return null;
+  const doneByWeek = {}; // program week N -> Set(distinct session id)
+  const addDone = (sessId) => {
+    const m = /^prog-w(\d+)-s\d+$/.exec(sessId);
+    if (!m) return;
+    const n = m[1];
+    (doneByWeek[n] = doneByWeek[n] || new Set()).add(sessId);
+  };
   weeks.forEach(w => {
-    const freq = (w.scoreBreakdown && w.scoreBreakdown.freq) || 0;
-    scheduled += freq;
-    done += (w.workoutLogs || []).length;
+    const sl = w.slotLogs || {};
+    Object.keys(sl).forEach(sessId => {
+      const recs = sl[sessId] || {};
+      const markedDone = recs._sessionDone === true;
+      const hasRealLog = Object.keys(recs).some(k => {
+        if (k === '_sessionDone') return false;
+        const r = recs[k];
+        return r && (r.weight || r.reps || r.rpe || r.sets || r.note);
+      });
+      if (markedDone || hasRealLog) addDone(sessId);
+    });
+    (w.workoutLogs || []).forEach(wl => {
+      if (wl && wl.week != null && wl.session != null) addDone('prog-w' + wl.week + '-s' + wl.session);
+    });
   });
+  let reachedMax = 0;
+  Object.keys(doneByWeek).forEach(n => { const x = parseInt(n, 10); if (x > reachedMax) reachedMax = x; });
+  if (reachedMax <= 0) return null; // no attendance data yet -> "—"
+  let done = 0, scheduled = 0;
+  for (let n = 1; n <= reachedMax; n++) {
+    scheduled += freq;
+    const got = doneByWeek[n] ? doneByWeek[n].size : 0;
+    done += Math.min(got, freq); // per-week cap: an over-logged week can't exceed 100%
+  }
   if (scheduled <= 0) return null;
-  return Math.round(Math.min(done, scheduled) / scheduled * 100);
+  return Math.min(100, Math.round(done / scheduled * 100));
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -3672,7 +3711,7 @@ function printProgressReport(clientId) {
 
     // Footer with QR code
     +(function(){
-      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=21';
+      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=22';
       const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data='+encodeURIComponent(portalUrl)+'&bgcolor=0f0f0c&color=c9a227&format=png';
       return '<div class="footer-bar" style="display:flex;align-items:center;justify-content:space-between;gap:16px">'
         +'<div>'

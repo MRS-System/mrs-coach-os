@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=21 -->
+<!-- portal cache-buster v=22 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2541,7 +2541,7 @@ function goTab(screen,tabId){
   document.getElementById(tabId).classList.add('active');
   if(screen==='score')renderScore();
   if(screen==='progress')renderProgress();
-  if(screen==='program'){renderProgram();renderCorrectiveBlock();enhanceFinisherSlots();}
+  if(screen==='program'){renderProgram();renderCorrectiveBlock();enhanceFinisherSlots();renderUnloggedPastSessionNudge();}
   if(screen==='coach')renderCoachTab();
 }
 
@@ -2573,7 +2573,7 @@ function loadProfileFromCode() {
     var el = document.getElementById('profileCodeInput'); if(el) el.value = '';
     var hn = document.getElementById('hdrName'); if(hn) hn.textContent = client.name;
     var ha = document.getElementById('hdrAvatar'); if(ha) ha.textContent = client.avatar + ' · ' + (client.cohort||'1-on-1');
-    renderProfileStatus(); renderProgress(); renderProgram(); renderCorrectiveBlock(); enhanceFinisherSlots(); renderCoachTab();
+    renderProfileStatus(); renderProgress(); renderProgram(); renderCorrectiveBlock(); enhanceFinisherSlots(); renderUnloggedPastSessionNudge(); renderCoachTab();
     showToast('Welcome ' + client.name + '! Profile loaded');
   } catch(e) { showToast('Could not read code. Ask your coach to copy it again.'); }
 }
@@ -3026,6 +3026,56 @@ function enhanceFinisherSlots() {
   });
 }
 
+// Client nudge (post-render, like renderCorrectiveBlock / enhanceFinisherSlots):
+// if a PAST program week (< current) has a session with NEITHER a slot log NOR a
+// mark-done marker, surface a small card prompting the client to open and mark
+// it done — late still counts. Client-facing only; never inside renderProgram.
+function renderUnloggedPastSessionNudge() {
+  const el = document.getElementById('programContent');
+  if (!el || !client) return;
+  const old = document.getElementById('unloggedSessionNudge'); if (old) old.remove();
+  const programs = client.programs || [];
+  const active = programs.find(function(p){return p.id===client.activeProgramId;}) || programs[programs.length-1];
+  if (!active) return;
+  const startDate = new Date(active.date || client.createdAt);
+  const currentWeek = Math.max(1, Math.min(8, Math.floor((new Date() - startDate)/(7*24*60*60*1000)) + 1));
+  const pdb = portalDb();
+  const cards = document.querySelectorAll('#programContent .prog-session-card[id^="sess-prog-w"]');
+  let target = null;
+  for (let i = 0; i < cards.length; i++) {
+    const m = /^sess-(prog-w(\d+)-s\d+)$/.exec(cards[i].id);
+    if (!m) continue;
+    const sessionId = m[1], wkN = parseInt(m[2], 10);
+    if (wkN >= currentWeek) continue; // only PAST weeks
+    const checks = (pdb.slotChecks && pdb.slotChecks[sessionId]) || {};
+    const markedDone = checks._sessionDone === true;
+    const hasLog = Object.keys(checks).some(function(k){
+      return k.endsWith('_log') && checks[k] && (checks[k].weight||checks[k].reps||checks[k].rpe||checks[k].sets||checks[k].note);
+    });
+    if (!markedDone && !hasLog) { target = {sessionId:sessionId, wkN:wkN, card:cards[i]}; break; }
+  }
+  if (!target) return;
+  const nudge = document.createElement('div');
+  nudge.id = 'unloggedSessionNudge';
+  nudge.style.cssText = 'background:rgba(201,162,39,.08);border:1px solid rgba(201,162,39,.3);border-radius:14px;padding:14px 16px;margin-bottom:14px;cursor:pointer';
+  nudge.innerHTML =
+    '<div style="display:flex;align-items:center;gap:10px">'
+    + '<div style="font-size:22px;flex-shrink:0">📌</div>'
+    + '<div style="flex:1;min-width:0">'
+    + '<div style="font-family:Bebas Neue,sans-serif;font-size:17px;letter-spacing:.03em;color:var(--gold);line-height:1.1">Unlogged Past Session</div>'
+    + '<div style="font-size:12px;color:var(--dim2);margin-top:2px;line-height:1.5">Week ' + target.wkN + ' isn’t marked done yet. Tap to open and log it — late still counts.</div>'
+    + '</div>'
+    + '<div style="font-size:18px;color:var(--gold);flex-shrink:0">›</div>'
+    + '</div>';
+  nudge.addEventListener('click', function(){
+    const weekCard = document.getElementById('week-' + target.wkN);
+    if (weekCard) weekCard.classList.add('open');
+    target.card.classList.add('open');
+    target.card.scrollIntoView({behavior:'smooth', block:'center'});
+  });
+  el.insertBefore(nudge, el.firstChild);
+}
+
 function toggleSlotCheck(sessionId, slotKey, event) {
   event.stopPropagation();
   const pdb = portalDb();
@@ -3104,6 +3154,9 @@ function buildWeeklyPayload() {
           logs[key.replace('_log','')] = {weight:val.weight, reps:val.reps, unit:val.unit||'lbs', rpe:val.rpe||'', sets:val.sets||'', ts:val.ts, note:(val.note||'')};
         }
       });
+      // Forward the mark-done marker too (attendance), so a session marked done
+      // with no slot inputs still travels to the coach for compliance.
+      if (checks._sessionDone === true) logs._sessionDone = true;
       if (Object.keys(logs).length) slotLogs[sessId] = logs;
     });
   }
@@ -3209,6 +3262,8 @@ window.addEventListener('load', renderCorrectiveBlock);
 // Finisher (Slot F) capture swap — same post-init load hook as the corrective
 // card, covering init()'s renderProgram() at load. renderProgram unedited.
 window.addEventListener('load', enhanceFinisherSlots);
+// Unlogged past-session nudge — same post-init load hook as above.
+window.addEventListener('load', renderUnloggedPastSessionNudge);
 
 // One-tap share link (?p=<id>): fetch the stored profile from the Worker and
 // load it through the SAME routine the manual paste flow uses (no duplicated
