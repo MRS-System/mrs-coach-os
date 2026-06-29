@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=22 -->
+<!-- portal cache-buster v=23 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1922,9 +1922,9 @@ function portalDb() {
 function savePortalDb(d){ try{localStorage.setItem(CLIENT_DB_KEY,JSON.stringify(d));}catch(e){} }
 function todayKey(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
 function weekKey(offset=0){const d=new Date();d.setDate(d.getDate()-d.getDay()+(offset*7));return`week-${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
-function getWeekDays(){
+function getWeekDays(offset=0){
   const today=new Date(),sunday=new Date(today);
-  sunday.setDate(today.getDate()-today.getDay());
+  sunday.setDate(today.getDate()-today.getDay()+(offset*7));
   return Array.from({length:7},(_,i)=>{
     const d=new Date(sunday);d.setDate(sunday.getDate()+i);
     return{key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`,label:DAYS[d.getDay()],isToday:d.toDateString()===today.toDateString(),isPast:d<today&&d.toDateString()!==today.toDateString()};
@@ -2092,14 +2092,12 @@ function renderComebackCard(){
 
 // \u2500\u2500 Sunday prompt \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function checkSundayPrompt(){
-  const today=new Date();
-  if(today.getDay()!==0)return; // Only Sunday
-  const pdb=portalDb();
-  const wk=weekKey();
-  if(pdb.sundaySkipped===wk)return; // Already skipped this week
-  const scores=calcWeekScore();
-  document.getElementById('sundayScore').textContent=scores.total;
-  setTimeout(()=>document.getElementById('sundayOverlay').classList.add('show'),800);
+  // Retired: the Sunday "Send / Skip" prompt was a dead-end — Skip set
+  // pdb.sundaySkipped and permanently suppressed the week, stranding it. Weekly
+  // delivery is now handled by autoSendUnsentWeeks() on every open (auto-send of
+  // prior completed weeks under their correct weekKey) plus the hard-gate
+  // fallback when a send can't complete. No Skip, ever. (init() still calls this
+  // — kept as a no-op so init stays byte-identical.)
 }
 function sundaySend(){
   document.getElementById('sundayOverlay').classList.remove('show');
@@ -2113,8 +2111,8 @@ function sundaySkip(){
 }
 
 // \u2500\u2500 Score \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-function calcWeekScore(){
-  const pdb=portalDb(),days=getWeekDays();
+function calcWeekScore(offset=0){
+  const pdb=portalDb(),days=getWeekDays(offset);
   const freq=client?(client.freq==='2x/week'?2:client.freq==='4x/week'?4:3):3;
   let protein=0,water=0,workouts=0,energySum=0,sleepSum=0,stressSum=0,dayCount=0;
   days.forEach(d=>{
@@ -2128,7 +2126,7 @@ function calcWeekScore(){
   const energyScore=dayCount>0?Math.round((energySum/dayCount/10)*7):0;
   const sleepScore=dayCount>0?Math.round((sleepSum/dayCount/10)*7):0;
   const stressScore=dayCount>0?Math.round(((10-stressSum/dayCount)/10)*7):0;
-  const wk=weekKey();
+  const wk=weekKey(offset);
   const nutritionRaw=pdb.weekScores?.[wk]?.nutrition||0;
   const nutritionScore=Math.round((nutritionRaw/10)*7);
   const total=protein+water+workoutScore+energyScore+sleepScore+stressScore+nutritionScore;
@@ -3137,9 +3135,9 @@ function markSessionDone(sessionId) {
 // Build the weekly check-in payload (compliance scores, workout logs, RPE,
 // wellness, meal scans). Consumed by sendWeekToInbox, which drops it into the
 // client's cloud mailbox for the coach OS to sweep.
-function buildWeeklyPayload() {
-  const pdb = portalDb(), scores = calcWeekScore(), wk = weekKey();
-  const days = getWeekDays();
+function buildWeeklyPayload(offset=0) {
+  const pdb = portalDb(), scores = calcWeekScore(offset), wk = weekKey(offset);
+  const days = getWeekDays(offset);
   const workoutLogs = days.map(d => {
     const ci = pdb.checkins[d.key];
     if (!ci || ci.workout !== 'yes') return null;
@@ -3192,7 +3190,99 @@ async function sendWeekToInbox() {
   }
 }
 
+// ── Weekly auto-send + hard-gate + stranded-week recovery (Path B) ─────
+// sendWeekToInbox (protected) can only send the CURRENT week and gives no
+// success signal, so these siblings handle prior/stranded weeks: they reuse the
+// parameterized buildWeeklyPayload(offset), do their own awaited POST, stamp the
+// PRIOR week's correct weekKey, and record success in pdb.sentWeeks. The coach
+// merge is idempotent per weekKey, so re-sending a week never duplicates.
+const RECOVERY_WEEKS = 4; // how many prior weeks back to scan for unsent data
 
+// Prior weeks that have check-in data but no recorded successful send. Ignores
+// pdb.sundaySkipped entirely (skip != sent) so a previously skipped/stranded
+// week is re-detected and recovered.
+function detectUnsentWeeks() {
+  const pdb = portalDb();
+  const sent = pdb.sentWeeks || {};
+  const out = [];
+  for (let off = -1; off >= -RECOVERY_WEEKS; off--) {
+    const wk = weekKey(off);
+    if (sent[wk]) continue; // already delivered
+    const days = getWeekDays(off);
+    const hasData = days.some(function(d){
+      const ci = pdb.checkins && pdb.checkins[d.key];
+      if (!ci) return false;
+      return ci.protein!=null || ci.water!=null || ci.workout!=null || ci.energy!=null
+          || ci.sleep!=null || ci.stress!=null || (ci.meals && ci.meals.length);
+    });
+    if (hasData) out.push({offset: off, weekKey: wk});
+  }
+  return out;
+}
+
+// Real sender for a prior week: builds that week's payload (correct weekKey),
+// POSTs it, and on success records pdb.sentWeeks[weekKey]. Returns true/false.
+async function sendWeekForOffset(offset) {
+  if (!clientId) return false;
+  const wk = weekKey(offset);
+  const pdb = portalDb();
+  if (pdb.sentWeeks && pdb.sentWeeks[wk]) return true; // already sent
+  try {
+    const payload = buildWeeklyPayload(offset);
+    if (!payload.clientId) return false;
+    // Safety: a prior week must travel under ITS OWN weekKey, never the current
+    // one — otherwise it would overwrite the current week's coach entry.
+    if (payload.weekKey !== wk) return false;
+    const res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/inbox', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId: payload.clientId, payload })
+    });
+    if (!res.ok) return false;
+    if (offset < 0) { // only flag completed (prior) weeks as definitively sent
+      const fresh = portalDb();
+      if (!fresh.sentWeeks) fresh.sentWeeks = {};
+      fresh.sentWeeks[wk] = Date.now();
+      savePortalDb(fresh);
+    }
+    return true;
+  } catch(e) { return false; }
+}
+
+// Show/refresh the hard-gate overlay. Empty list -> remove it. No Skip option:
+// the client cannot move forward until every unsent week is delivered.
+function renderSendGate(unsent) {
+  const existing = document.getElementById('sendGateOverlay');
+  if (!unsent || !unsent.length) { if (existing) existing.remove(); return; }
+  if (existing) return; // already shown; retry handler updates its status
+  const n = unsent.length;
+  const gate = document.createElement('div');
+  gate.id = 'sendGateOverlay';
+  gate.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(8,8,6,.975);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 28px;text-align:center';
+  gate.innerHTML =
+    '<div style="font-size:52px;margin-bottom:20px">📡</div>'
+    + '<div style="font-family:Bebas Neue,sans-serif;font-size:34px;letter-spacing:.04em;color:var(--white);line-height:1;margin-bottom:14px">Send Your Week</div>'
+    + '<div style="font-size:14px;color:var(--dim2);line-height:1.7;max-width:300px;margin-bottom:28px">You have ' + n + ' completed week' + (n!==1?'s':'') + ' that hasn’t reached your coach yet. We’ll deliver ' + (n!==1?'them':'it') + ' now so your coaching stays on track.</div>'
+    + '<button id="sendGateRetry" style="padding:16px 36px;background:var(--gold);border:none;border-radius:14px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:20px;letter-spacing:.08em;cursor:pointer">Send Now</button>'
+    + '<div id="sendGateStatus" style="font-size:12px;color:var(--dim);margin-top:16px;min-height:16px"></div>';
+  document.body.appendChild(gate);
+  document.getElementById('sendGateRetry').addEventListener('click', async function(){
+    const btn = document.getElementById('sendGateRetry');
+    const st = document.getElementById('sendGateStatus');
+    btn.disabled = true; if (st) { st.style.color = 'var(--dim)'; st.textContent = 'Sending…'; }
+    await autoSendUnsentWeeks();
+    const still = document.getElementById('sendGateOverlay');
+    if (still) { btn.disabled = false; const s2 = document.getElementById('sendGateStatus'); if (s2) { s2.style.color = 'var(--red)'; s2.textContent = 'Still couldn’t reach your coach — check your connection and try again.'; } }
+  });
+}
+
+// Run on every open: silently auto-send each unsent prior week, then hard-gate
+// if any remain (offline/error). Happy path is invisible (no prompt, no gate).
+async function autoSendUnsentWeeks() {
+  if (!client || !clientId) return;
+  const unsent = detectUnsentWeeks();
+  for (let i = 0; i < unsent.length; i++) { await sendWeekForOffset(unsent[i].offset); }
+  renderSendGate(detectUnsentWeeks());
+}
 
 function init() {
   clientId = getClientId();
@@ -3264,6 +3354,10 @@ window.addEventListener('load', renderCorrectiveBlock);
 window.addEventListener('load', enhanceFinisherSlots);
 // Unlogged past-session nudge — same post-init load hook as above.
 window.addEventListener('load', renderUnloggedPastSessionNudge);
+// Weekly auto-send + hard-gate on open — recovers any stranded/skipped prior
+// week (sends under its correct weekKey), gates forward use if a send can't
+// complete. Same post-init load hook pattern as above.
+window.addEventListener('load', autoSendUnsentWeeks);
 
 // One-tap share link (?p=<id>): fetch the stored profile from the Worker and
 // load it through the SAME routine the manual paste flow uses (no duplicated
