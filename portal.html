@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=23 -->
+<!-- portal cache-buster v=24 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -9,6 +9,8 @@
 <meta name="theme-color" content="#080806">
 <title>MRS™ · My Portal</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<!-- ZXing barcode reader (packaged-food precision lane). First external script; loads async, scanner degrades gracefully to photo if unavailable. -->
+<script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
 <style>
 :root {
   --black:   #080806;
@@ -1559,6 +1561,9 @@ input[type=range]::-moz-range-thumb {
           <button class="nr-scan-btn" onclick="openNutriReader()">
             📸 Scan a Meal — NutriReader™
           </button>
+          <button class="nr-scan-btn" onclick="openBarcodeScanner()">
+            🔖 Scan a Barcode — Packaged Food
+          </button>
           <div id="nrDailyLog"></div>
           <button onclick="openNRHistory()" style="width:100%;margin-top:8px;padding:11px;background:transparent;border:1px solid var(--border2);border-radius:10px;color:var(--dim2);font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;letter-spacing:.08em;cursor:pointer">📖 View Meal History</button>
         </div>
@@ -1878,6 +1883,38 @@ input[type=range]::-moz-range-thumb {
     </div>
     <div style="font-size:11px;color:var(--dim);margin-bottom:4px;line-height:1.6">Your scanned meals, newest first. Photos are kept for 30 days.</div>
     <div id="nrHistoryContent"></div>
+  </div>
+</div>
+
+<!-- Barcode scanner overlay (packaged-food precision lane) -->
+<div class="nr-overlay" id="bcOverlay">
+  <div style="flex:1;display:flex;flex-direction:column;padding:24px 20px 40px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:.04em;color:var(--gold)">Scan a Barcode</div>
+      <button onclick="closeBarcodeScanner()" style="background:var(--black3);border:1px solid var(--border);border-radius:8px;color:var(--dim);font-size:18px;padding:6px 12px;cursor:pointer">×</button>
+    </div>
+
+    <!-- Live camera scan -->
+    <div id="bcScan" style="display:flex;flex-direction:column">
+      <div style="font-size:11px;color:var(--dim);margin-bottom:12px;line-height:1.6">Point your camera at the product barcode. Exact label macros — no quality score (packaged food isn't graded).</div>
+      <div style="position:relative;width:100%;aspect-ratio:4/3;background:#000;border-radius:14px;overflow:hidden;border:1px solid var(--border)">
+        <video id="bcVideo" playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
+          <div style="width:78%;height:34%;border:2px solid var(--gold);border-radius:12px;box-shadow:0 0 0 9999px rgba(0,0,0,.35)"></div>
+        </div>
+      </div>
+      <div id="bcScanMsg" style="text-align:center;font-size:12px;color:var(--dim2);margin-top:14px">Looking for a barcode…</div>
+      <button onclick="closeBarcodeScanner()" style="width:100%;margin-top:16px;padding:13px;background:var(--black3);border:1px solid var(--border2);border-radius:12px;color:var(--dim2);font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:pointer">Cancel</button>
+    </div>
+
+    <!-- Lookup spinner -->
+    <div id="bcLoading" style="display:none;flex-direction:column;align-items:center;justify-content:center;padding:60px 24px;text-align:center">
+      <div style="font-size:40px;margin-bottom:16px;animation:pulse 1.2s infinite">🔖</div>
+      <div style="font-size:13px;color:var(--dim);line-height:1.7" id="bcLoadingMsg">Looking up the label…</div>
+    </div>
+
+    <!-- Result / confirm / manual / not-found — populated by JS -->
+    <div id="bcResult" style="display:none;flex-direction:column"></div>
   </div>
 </div>
 
@@ -2602,6 +2639,7 @@ function openNutriReader() {
 function closeNutriReader() {
   document.getElementById('nrOverlay').classList.remove('show');
   renderNRDailyLog();
+  renderBarcodeDayLog();
 }
 
 // ── Meal history (Step 2) ─────────────────────────────────
@@ -2620,8 +2658,9 @@ function renderNRHistory() {
   if (!el) return;
   const pdb = portalDb();
   const checkins = pdb.checkins || {};
+  // Include days with scanned photo meals OR barcode (packaged) items.
   const dayKeys = Object.keys(checkins)
-    .filter(function(k){ const d = checkins[k]; return d && Array.isArray(d.meals) && d.meals.length; })
+    .filter(function(k){ const d = checkins[k]; return d && ((Array.isArray(d.meals) && d.meals.length) || (Array.isArray(d.barcodeItems) && d.barcodeItems.length)); })
     .sort()
     .reverse();
   if (!dayKeys.length) {
@@ -2629,31 +2668,54 @@ function renderNRHistory() {
     return;
   }
   el.innerHTML = dayKeys.map(function(dk) {
-    const meals = checkins[dk].meals;
+    const meals = Array.isArray(checkins[dk].meals) ? checkins[dk].meals : [];
+    const items = Array.isArray(checkins[dk].barcodeItems) ? checkins[dk].barcodeItems : [];
     const dateLabel = new Date(dk + 'T00:00').toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'});
-    const avgScore = Math.round(meals.reduce(function(s,m){return s+m.score;}, 0) / meals.length);
-    const totalProtein = meals.reduce(function(s,m){return s+(m.macros && m.macros.protein || 0);}, 0);
-    const dayColor = nrScoreColor(avgScore);
+    // Quality average = scored photo meals ONLY (barcode items are macro-only, never graded).
+    const scored = meals.filter(function(m){ return typeof m.score === 'number'; });
+    const avgScore = scored.length ? Math.round(scored.reduce(function(s,m){return s+m.score;}, 0) / scored.length) : null;
+    // Protein total INCLUDES barcode items (macros are facts, they count).
+    const totalProtein = meals.concat(items).reduce(function(s,m){return s+(m.macros && m.macros.protein || 0);}, 0);
+    const count = meals.length + items.length;
+    const scoreBadge = avgScore == null
+      ? '<span style="font-family:Bebas Neue,sans-serif;font-size:20px;color:var(--dim);line-height:1">—</span>'
+      : '<span style="font-family:Bebas Neue,sans-serif;font-size:20px;color:' + nrScoreColor(avgScore) + ';line-height:1">' + avgScore + '<span style="font-size:10px;color:var(--dim)">/10</span></span>';
     const header = '<div style="display:flex;align-items:center;justify-content:space-between;margin:18px 0 8px">'
       + '<div style="font-family:Barlow Condensed,sans-serif;font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--white)">' + dateLabel + '</div>'
       + '<div style="display:flex;align-items:center;gap:8px">'
-      + '<span style="font-size:11px;color:var(--dim)">' + meals.length + ' meal' + (meals.length!==1?'s':'') + ' · ~' + totalProtein + 'g protein</span>'
-      + '<span style="font-family:Bebas Neue,sans-serif;font-size:20px;color:' + dayColor + ';line-height:1">' + avgScore + '<span style="font-size:10px;color:var(--dim)">/10</span></span>'
+      + '<span style="font-size:11px;color:var(--dim)">' + count + ' item' + (count!==1?'s':'') + ' · ~' + Math.round(totalProtein) + 'g protein</span>'
+      + scoreBadge
       + '</div></div>';
-    const rows = meals.map(function(m, i) {
-      const c = nrScoreColor(m.score);
+    // Interleave photo meals + barcode items by timestamp, newest first.
+    const combined = meals.map(function(m){ return Object.assign({}, m, {_bc:false}); })
+      .concat(items.map(function(m){ return Object.assign({}, m, {_bc:true}); }))
+      .sort(function(a,b){ return (b.ts||0) - (a.ts||0); });
+    const rows = combined.map(function(m, i) {
       const time = new Date(m.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      const protein = (m.macros && m.macros.protein != null) ? m.macros.protein : '?';
+      const cals = (m.macros && m.macros.calories != null) ? m.macros.calories : '?';
+      if (m._bc) {
+        // Barcode item: no score badge, clean no-photo placeholder, "label scan" tag.
+        const ph = '<div style="width:52px;height:52px;border-radius:10px;flex-shrink:0;background:var(--black4);border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--dim);font-size:9px;gap:2px"><span style="font-size:16px">🔖</span><span>Label</span></div>';
+        return '<div style="display:flex;align-items:center;gap:12px;background:var(--black4);border-radius:12px;padding:10px;margin-bottom:8px">'
+          + ph
+          + '<div style="flex:1;min-width:0">'
+          + '<div style="font-size:13px;color:var(--white);overflow:hidden;text-overflow:ellipsis">' + bcEsc(m.context || m.name || 'Packaged item') + '</div>'
+          + '<div style="font-size:10px;color:var(--dim);margin-top:2px">' + time + ' · ' + protein + 'g protein · ' + cals + ' cal · <span style="color:var(--dim2)">label scan</span></div>'
+          + '</div></div>';
+      }
+      const c = nrScoreColor(m.score);
       const thumb = m.thumb
         ? '<img src="' + m.thumb + '" alt="meal" style="width:52px;height:52px;border-radius:10px;object-fit:cover;flex-shrink:0;border:1px solid var(--border)">'
         : '<div style="width:52px;height:52px;border-radius:10px;flex-shrink:0;background:var(--black4);border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--dim);font-size:9px;gap:2px"><span style="font-size:16px">🍽️</span><span>No photo</span></div>';
-      const protein = (m.macros && m.macros.protein) || '?';
-      const cals = (m.macros && m.macros.calories) || '?';
+      const pr = (m.macros && m.macros.protein) || '?';
+      const cl = (m.macros && m.macros.calories) || '?';
       return '<div style="display:flex;align-items:center;gap:12px;background:var(--black4);border-radius:12px;padding:10px;margin-bottom:8px">'
         + thumb
         + '<div style="font-family:Bebas Neue,sans-serif;font-size:24px;color:' + c + ';width:30px;text-align:center;flex-shrink:0">' + m.score + '</div>'
         + '<div style="flex:1;min-width:0">'
         + '<div style="font-size:13px;color:var(--white);overflow:hidden;text-overflow:ellipsis">' + (m.context || ('Meal ' + (i+1))) + '</div>'
-        + '<div style="font-size:10px;color:var(--dim);margin-top:2px">' + time + ' · ' + protein + 'g protein · ' + cals + ' cal</div>'
+        + '<div style="font-size:10px;color:var(--dim);margin-top:2px">' + time + ' · ' + pr + 'g protein · ' + cl + ' cal</div>'
         + '</div></div>';
     }).join('');
     return header + rows;
@@ -2830,6 +2892,7 @@ function logNRMeal() {
   closeNutriReader();
   renderTodayChecklist();
   renderNRDailyLog();
+  renderBarcodeDayLog();
   showToast('Meal logged · Score: ' + score + '/10');
 }
 
@@ -2894,6 +2957,312 @@ function renderNRDailyLog() {
   const totalProtein = meals.reduce((s,m) => s+(m.macros?.protein||0), 0);
   const scoreColor = avgScore >= 8 ? 'var(--green)' : avgScore >= 6 ? 'var(--gold)' : 'var(--red)';
   el.innerHTML = '<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px"><div style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);font-family:Barlow Condensed,sans-serif;margin-bottom:8px">Today\'s Meal Log</div><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;background:var(--black4);border-radius:10px;padding:10px"><div style="font-family:Bebas Neue,sans-serif;font-size:28px;color:' + scoreColor + ';line-height:1">' + avgScore + '</div><div><div style="font-size:12px;font-weight:700;color:var(--white)">Daily Avg Score</div><div style="font-size:11px;color:var(--dim)">' + meals.length + ' meal' + (meals.length!==1?'s':'') + ' · ~' + totalProtein + 'g protein</div></div></div>' + meals.map(function(m,i){const c=m.score>=8?'var(--green)':m.score>=6?'var(--gold)':'var(--red)';const time=new Date(m.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><div style="font-family:Bebas Neue,sans-serif;font-size:22px;color:'+c+';width:32px;text-align:center">'+m.score+'</div><div style="flex:1"><div style="font-size:12px;color:var(--white)">'+(m.context||'Meal '+(i+1))+'</div><div style="font-size:10px;color:var(--dim)">'+time+' · '+(m.macros?.protein||'?')+'g protein</div></div></div>';}).join('') + '</div>';
+}
+
+// ── Barcode Scanner (packaged-food precision lane) ───────
+// New, self-contained lane. Items are MACRO-ONLY (no 1–10 quality score) and
+// live in pdb.checkins[day].barcodeItems[] — NEVER in .meals — so the protected
+// renderNRDailyLog is never fed a scoreless entry. A non-protected sibling
+// (renderBarcodeDayLog) overlays the unified day view; renderNRHistory and
+// buildWeeklyPayload already merge them. Macros count toward daily totals;
+// quality averages skip them.
+let barcodeReader = null;
+let barcodePending = null;
+
+// Minimal HTML escaper — OFF product names/brands are untrusted external text.
+function bcEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+
+function openBarcodeScanner() {
+  const ov = document.getElementById('bcOverlay');
+  if (!ov) return;
+  document.getElementById('bcScan').style.display = 'flex';
+  document.getElementById('bcScan').style.flexDirection = 'column';
+  document.getElementById('bcLoading').style.display = 'none';
+  document.getElementById('bcResult').style.display = 'none';
+  document.getElementById('bcResult').innerHTML = '';
+  document.getElementById('bcScanMsg').textContent = 'Looking for a barcode…';
+  ov.classList.add('show');
+  startBarcodeCamera();
+}
+
+// Release the camera + decoder on every exit path.
+function stopBarcodeCamera() {
+  try { if (barcodeReader) barcodeReader.reset(); } catch (e) {}
+  barcodeReader = null;
+  try {
+    const v = document.getElementById('bcVideo');
+    if (v && v.srcObject) { v.srcObject.getTracks().forEach(function(t){ t.stop(); }); v.srcObject = null; }
+  } catch (e) {}
+}
+
+function closeBarcodeScanner() {
+  stopBarcodeCamera();
+  const ov = document.getElementById('bcOverlay');
+  if (ov) ov.classList.remove('show');
+  barcodePending = null;
+}
+
+function startBarcodeCamera() {
+  // ZXing failed to load (first external script) -> graceful handoff to photo.
+  if (typeof ZXing === 'undefined' || !ZXing.BrowserMultiFormatReader) {
+    showToast('Scanner unavailable — use a photo instead');
+    barcodeHandoffToPhoto();
+    return;
+  }
+  try { if (barcodeReader) barcodeReader.reset(); } catch (e) {}
+  barcodeReader = new ZXing.BrowserMultiFormatReader();
+  const video = document.getElementById('bcVideo');
+  const constraints = { video: { facingMode: { ideal: 'environment' } } };
+  barcodeReader.decodeFromConstraints(constraints, video, function(result, err) {
+    if (result) {
+      const code = result.getText ? result.getText() : (result.text || '');
+      if (code) { stopBarcodeCamera(); lookupBarcode(code); }
+    }
+    // NotFoundException between frames is normal — ignore.
+  }).catch(function() {
+    // Camera blocked/unavailable -> no dead end, hand off to photo.
+    showToast('Camera unavailable — use a photo instead');
+    barcodeHandoffToPhoto();
+  });
+}
+
+// POST to the live Worker /barcode route. Any network/parse failure is treated
+// as "not found" so the caller falls through to the photo hand-off.
+async function lookupBarcode(code) {
+  document.getElementById('bcScan').style.display = 'none';
+  document.getElementById('bcResult').style.display = 'none';
+  const loading = document.getElementById('bcLoading');
+  loading.style.display = 'flex';
+  loading.style.flexDirection = 'column';
+  let data;
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(function(){ controller.abort(); }, 15000);
+    let res;
+    try {
+      res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/barcode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ barcode: code }),
+        signal: controller.signal
+      });
+    } finally { clearTimeout(t); }
+    data = await res.json();
+  } catch (e) {
+    data = { found: false, barcode: code };
+  }
+  loading.style.display = 'none';
+  handleBarcodeResult(data, code);
+}
+
+function handleBarcodeResult(data, code) {
+  const el = document.getElementById('bcResult');
+  el.style.display = 'flex';
+  el.style.flexDirection = 'column';
+  const hasMacros = data && data.found && (
+    (data.perServing && (data.perServing.calories != null || data.perServing.protein != null)) ||
+    (data.per100g && (data.per100g.calories != null || data.per100g.protein != null))
+  );
+  if (hasMacros) {
+    renderBarcodeConfirm(data);
+  } else if (data && data.found) {
+    // Identified but no nutrition on file -> manual macro entry.
+    showBarcodeManualEntry(data.name || '', data.barcode || code);
+  } else {
+    renderBarcodeNotFound(code);
+  }
+}
+
+// Confirm card with an adjustable quantity. Prefers per-serving macros (default
+// 1 serving); falls back to per-100g (default = serving grams, or 100).
+function renderBarcodeConfirm(data) {
+  const hasServing = data.perServing && (data.perServing.calories != null || data.perServing.protein != null);
+  barcodePending = { data: data, mode: hasServing ? 'serving' : 'per100g' };
+  const qtyLabel = hasServing ? 'Servings' : 'Grams';
+  const qtyDefault = hasServing ? 1 : (data.servingQuantity || 100);
+  const qtyStep = hasServing ? '0.5' : '10';
+  const unitNote = hasServing
+    ? ('Per serving' + (data.servingSize ? ' · ' + bcEsc(data.servingSize) : ''))
+    : 'Per 100 g';
+  const img = data.image
+    ? '<img src="' + bcEsc(data.image) + '" alt="" style="width:54px;height:54px;border-radius:10px;object-fit:cover;border:1px solid var(--border);flex-shrink:0">'
+    : '<div style="width:54px;height:54px;border-radius:10px;background:var(--black4);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">🔖</div>';
+  const el = document.getElementById('bcResult');
+  el.innerHTML =
+    '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">' + img
+    + '<div style="flex:1;min-width:0"><div style="font-family:Bebas Neue,sans-serif;font-size:22px;color:var(--white);line-height:1.1">' + bcEsc(data.name || 'Packaged Food') + '</div>'
+    + (data.brand ? '<div style="font-size:12px;color:var(--dim)">' + bcEsc(data.brand) + '</div>' : '')
+    + '<div style="font-size:10px;color:var(--dim2);margin-top:2px">' + unitNote + ' · Open Food Facts · no quality score</div></div></div>'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;background:var(--black4);border-radius:12px;padding:12px">'
+    + '<div style="font-size:12px;color:var(--dim2);font-weight:700;width:70px">' + qtyLabel + '</div>'
+    + '<input id="bcQty" type="number" inputmode="decimal" min="0" step="' + qtyStep + '" value="' + qtyDefault + '" oninput="bcRecompute()" style="flex:1;background:var(--black3);border:1px solid var(--border2);border-radius:8px;color:var(--white);font-size:16px;padding:10px;text-align:center">'
+    + '</div>'
+    + '<div class="nr-macro-row" style="margin-bottom:16px"><div class="nr-macro"><div class="nr-macro-val" id="bcMP" style="color:var(--gold)">–</div><div class="nr-macro-label">Protein</div></div><div class="nr-macro"><div class="nr-macro-val" id="bcMC" style="color:#60a5fa">–</div><div class="nr-macro-label">Carbs</div></div><div class="nr-macro"><div class="nr-macro-val" id="bcMF" style="color:#f97316">–</div><div class="nr-macro-label">Fat</div></div><div class="nr-macro"><div class="nr-macro-val" id="bcMCal">–</div><div class="nr-macro-label">Calories</div></div></div>'
+    + '<button onclick="logBarcodeFromConfirm()" style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:12px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer">Log This Item</button>'
+    + '<button onclick="openBarcodeScanner()" style="width:100%;margin-top:8px;padding:12px;background:transparent;border:1px solid var(--border2);border-radius:10px;color:var(--dim2);font-family:Barlow Condensed,sans-serif;font-size:13px;font-weight:700;letter-spacing:.08em;cursor:pointer">Wrong item? Scan again</button>';
+  bcRecompute();
+}
+
+function bcRecompute() {
+  if (!barcodePending || !barcodePending.data) return;
+  const data = barcodePending.data, mode = barcodePending.mode;
+  const qtyEl = document.getElementById('bcQty');
+  const qty = qtyEl ? (parseFloat(qtyEl.value) || 0) : 0;
+  const base = mode === 'serving' ? data.perServing : data.per100g;
+  if (!base) return;
+  const factor = mode === 'serving' ? qty : (qty / 100);
+  const r1 = function(v){ return (v == null || isNaN(v)) ? 0 : Math.round(v * factor * 10) / 10; };
+  const ri = function(v){ return (v == null || isNaN(v)) ? 0 : Math.round(v * factor); };
+  const macros = { protein: r1(base.protein), carbs: r1(base.carbs), fat: r1(base.fat), calories: ri(base.calories) };
+  barcodePending.macros = macros;
+  const setT = function(id, val){ const e = document.getElementById(id); if (e) e.textContent = val; };
+  setT('bcMP', macros.protein + 'g'); setT('bcMC', macros.carbs + 'g'); setT('bcMF', macros.fat + 'g'); setT('bcMCal', macros.calories);
+}
+
+function logBarcodeFromConfirm() {
+  if (!barcodePending) return;
+  if (!barcodePending.macros) bcRecompute();
+  const data = barcodePending.data || {};
+  const macros = barcodePending.macros;
+  if (!macros) return;
+  logBarcodeMeal({ name: data.name || 'Packaged Food', brand: data.brand || null, barcode: data.barcode || null, macros: macros });
+}
+
+// Name-only stub (or fallback): minimal macro form straight from the label.
+function showBarcodeManualEntry(name, barcode) {
+  barcodePending = { manual: true, name: name, barcode: barcode };
+  const el = document.getElementById('bcResult');
+  el.style.display = 'flex';
+  el.style.flexDirection = 'column';
+  el.innerHTML =
+    '<div style="margin-bottom:14px"><div style="font-family:Bebas Neue,sans-serif;font-size:22px;color:var(--white)">' + (name ? ('Found: ' + bcEsc(name)) : 'Manual Entry') + '</div>'
+    + '<div style="font-size:12px;color:var(--dim);margin-top:4px;line-height:1.6">' + (name ? 'No nutrition on file for this product. ' : '') + 'Enter the macros from the label.</div></div>'
+    + ['protein','carbs','fat','calories'].map(function(k){
+        const label = k.charAt(0).toUpperCase() + k.slice(1);
+        return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><div style="width:80px;font-size:12px;color:var(--dim2)">' + label + '</div><input id="bcMan_' + k + '" type="number" inputmode="decimal" min="0" placeholder="0" style="flex:1;background:var(--black3);border:1px solid var(--border2);border-radius:8px;color:var(--white);font-size:15px;padding:10px"></div>';
+      }).join('')
+    + '<button onclick="saveBarcodeManual()" style="width:100%;margin-top:8px;padding:14px;background:var(--gold);border:none;border-radius:12px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer">Log This Item</button>'
+    + '<button onclick="barcodeHandoffToPhoto()" style="width:100%;margin-top:8px;padding:12px;background:transparent;border:1px solid var(--border2);border-radius:10px;color:var(--dim2);font-family:Barlow Condensed,sans-serif;font-size:13px;font-weight:700;letter-spacing:.08em;cursor:pointer">Or snap a photo instead</button>';
+}
+
+function saveBarcodeManual() {
+  if (!barcodePending) return;
+  const num = function(id){ const v = parseFloat((document.getElementById(id) || {}).value); return isNaN(v) ? 0 : v; };
+  const macros = { protein: num('bcMan_protein'), carbs: num('bcMan_carbs'), fat: num('bcMan_fat'), calories: num('bcMan_calories') };
+  if (!macros.protein && !macros.carbs && !macros.fat && !macros.calories) { showToast('Enter at least one macro'); return; }
+  logBarcodeMeal({ name: barcodePending.name || 'Packaged Food', brand: null, barcode: barcodePending.barcode || null, macros: macros });
+}
+
+// Not found / network error -> auto-hand-off to the EXISTING photo entry point.
+function renderBarcodeNotFound(code) {
+  const el = document.getElementById('bcResult');
+  el.style.display = 'flex';
+  el.style.flexDirection = 'column';
+  el.innerHTML =
+    '<div style="text-align:center;padding:20px 12px"><div style="font-size:40px;margin-bottom:12px">🔍</div>'
+    + '<div style="font-family:Bebas Neue,sans-serif;font-size:22px;color:var(--white);margin-bottom:8px">Couldn\'t Find It</div>'
+    + '<div style="font-size:13px;color:var(--dim2);line-height:1.7;margin-bottom:20px">That barcode isn\'t in the database. Snap a photo of the food instead — NutriReader will estimate it.</div>'
+    + '<button onclick="barcodeHandoffToPhoto()" style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:12px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer">📸 Snap a Photo Instead</button>'
+    + '<button onclick="openBarcodeScanner()" style="width:100%;margin-top:8px;padding:12px;background:transparent;border:1px solid var(--border2);border-radius:10px;color:var(--dim2);font-family:Barlow Condensed,sans-serif;font-size:13px;font-weight:700;letter-spacing:.08em;cursor:pointer">Try Scanning Again</button></div>';
+}
+
+function barcodeHandoffToPhoto() {
+  closeBarcodeScanner();
+  openNutriReader();
+}
+
+// Save a macro-only barcode item into the SEPARATE barcodeItems[] array (never
+// .meals). thumb:null, no score. Macros count toward the day's protein gate.
+function logBarcodeMeal(entry) {
+  const pdb = portalDb();
+  const today = todayKey();
+  if (!pdb.checkins) pdb.checkins = {};
+  if (!pdb.checkins[today]) pdb.checkins[today] = {};
+  if (!pdb.checkins[today].barcodeItems) pdb.checkins[today].barcodeItems = [];
+  const m = entry.macros || {};
+  const item = {
+    ts: Date.now(),
+    kind: 'barcode',
+    name: entry.name || 'Packaged Food',
+    brand: entry.brand || null,
+    barcode: entry.barcode || null,
+    context: entry.name || 'Packaged Food',
+    macros: {
+      protein: Math.round((m.protein || 0) * 10) / 10,
+      carbs: Math.round((m.carbs || 0) * 10) / 10,
+      fat: Math.round((m.fat || 0) * 10) / 10,
+      calories: Math.round(m.calories || 0)
+    },
+    source: 'Open Food Facts',
+    thumb: null
+  };
+  pdb.checkins[today].barcodeItems.push(item);
+  pdb.checkins[today].ts = Date.now();
+  // Protein checkbox gate: total protein = photo meals + barcode items.
+  const meals = pdb.checkins[today].meals || [];
+  const items = pdb.checkins[today].barcodeItems;
+  const totalProtein = meals.reduce(function(s,x){return s+((x.macros && x.macros.protein) || 0);}, 0)
+    + items.reduce(function(s,x){return s+((x.macros && x.macros.protein) || 0);}, 0);
+  const bw = parseFloat(client?.intake?.weight || 0);
+  if (bw > 0 && totalProtein >= bw * 0.75) pdb.checkins[today].protein = 'yes';
+  savePortalDb(pdb);
+  barcodePending = null;
+  closeBarcodeScanner();
+  renderTodayChecklist();
+  renderNRDailyLog();
+  renderBarcodeDayLog();
+  showToast('Logged: ' + (item.name.length > 24 ? item.name.slice(0, 24) + '…' : item.name));
+}
+
+// Non-protected sibling: when today has barcode items, OVERLAY #nrDailyLog with
+// a unified list (photo meals scored + barcode items macro-only, interleaved by
+// time). Totals include both; the quality avg counts scored photo meals ONLY.
+// When there are no barcode items it no-ops, leaving renderNRDailyLog's output.
+function renderBarcodeDayLog() {
+  const el = document.getElementById('nrDailyLog');
+  if (!el) return;
+  const pdb = portalDb();
+  const day = pdb.checkins && pdb.checkins[todayKey()] ? pdb.checkins[todayKey()] : {};
+  const items = Array.isArray(day.barcodeItems) ? day.barcodeItems : [];
+  if (!items.length) return; // leave the protected renderer's output untouched
+  const meals = Array.isArray(day.meals) ? day.meals : [];
+  const combined = meals.map(function(m){ return Object.assign({}, m, {_bc:false}); })
+    .concat(items.map(function(m){ return Object.assign({}, m, {_bc:true}); }))
+    .sort(function(a,b){ return (a.ts||0) - (b.ts||0); });
+  const scored = meals.filter(function(m){ return typeof m.score === 'number'; });
+  const avgScore = scored.length ? Math.round(scored.reduce(function(s,m){return s+m.score;}, 0) / scored.length) : null;
+  const totalProtein = combined.reduce(function(s,m){return s+((m.macros && m.macros.protein) || 0);}, 0);
+  const totalCals = combined.reduce(function(s,m){return s+((m.macros && m.macros.calories) || 0);}, 0);
+  const scoreColor = avgScore == null ? 'var(--dim)' : avgScore >= 8 ? 'var(--green)' : avgScore >= 6 ? 'var(--gold)' : 'var(--red)';
+  const headerScore = avgScore == null ? '—' : avgScore;
+  let html = '<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">'
+    + '<div style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);font-family:Barlow Condensed,sans-serif;margin-bottom:8px">Today\'s Meal Log</div>'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;background:var(--black4);border-radius:10px;padding:10px">'
+    + '<div style="font-family:Bebas Neue,sans-serif;font-size:28px;color:' + scoreColor + ';line-height:1">' + headerScore + '</div>'
+    + '<div><div style="font-size:12px;font-weight:700;color:var(--white)">Daily Avg Score</div>'
+    + '<div style="font-size:11px;color:var(--dim)">' + combined.length + ' item' + (combined.length !== 1 ? 's' : '') + ' · ~' + Math.round(totalProtein) + 'g protein · ' + Math.round(totalCals) + ' cal</div></div></div>';
+  html += combined.map(function(m, i) {
+    const time = new Date(m.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    if (m._bc) {
+      const prot = (m.macros && m.macros.protein != null) ? m.macros.protein : '?';
+      const cal = (m.macros && m.macros.calories != null) ? m.macros.calories : '?';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)">'
+        + '<div style="font-size:18px;width:32px;text-align:center">🔖</div>'
+        + '<div style="flex:1"><div style="font-size:12px;color:var(--white)">' + bcEsc(m.context || m.name || 'Packaged item') + '</div>'
+        + '<div style="font-size:10px;color:var(--dim)">' + time + ' · ' + prot + 'g protein · ' + cal + ' cal · <span style="color:var(--dim2)">label scan</span></div></div></div>';
+    }
+    const c = m.score >= 8 ? 'var(--green)' : m.score >= 6 ? 'var(--gold)' : 'var(--red)';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)">'
+      + '<div style="font-family:Bebas Neue,sans-serif;font-size:22px;color:' + c + ';width:32px;text-align:center">' + m.score + '</div>'
+      + '<div style="flex:1"><div style="font-size:12px;color:var(--white)">' + (m.context || ('Meal ' + (i+1))) + '</div>'
+      + '<div style="font-size:10px;color:var(--dim)">' + time + ' · ' + ((m.macros && m.macros.protein) || '?') + 'g protein</div></div></div>';
+  }).join('');
+  html += '</div>';
+  el.innerHTML = html;
 }
 
 // ── Slot Logging ──────────────────────────────────────
@@ -3160,12 +3529,17 @@ function buildWeeklyPayload(offset=0) {
   }
   const mealScans = {};
   days.forEach(d => { const meals = pdb.checkins?.[d.key]?.meals; if (meals?.length) mealScans[d.key] = meals; });
+  // Barcode (packaged-food) items are macro-only and carry NO quality score, so
+  // they ride in their own field and are EXCLUDED from avgNutriScore below
+  // (which stays over scored photo meals only). Macros still reach the coach.
+  const barcodeScans = {};
+  days.forEach(d => { const items = pdb.checkins?.[d.key]?.barcodeItems; if (items?.length) barcodeScans[d.key] = items; });
   const avgNutriScore = Object.values(mealScans).flat().length > 0
     ? Math.round(Object.values(mealScans).flat().reduce((s,m) => s+m.score, 0) / Object.values(mealScans).flat().length) : null;
   return {clientId, clientName:client?.name||'Unknown', weekKey:wk, generatedAt:new Date().toISOString(),
     weekScore:scores.total, scoreBreakdown:scores, streak:pdb.streak, personalBest:pdb.personalBest||0,
     checkins:Object.fromEntries(days.map(d=>[d.key, pdb.checkins[d.key]||null])),
-    workoutLogs, slotLogs, mealScans, avgNutriScore};
+    workoutLogs, slotLogs, mealScans, barcodeScans, avgNutriScore};
 }
 
 // Mailbox send: POST the weekly payload to the client's fixed cloud mailbox
@@ -3358,6 +3732,10 @@ window.addEventListener('load', renderUnloggedPastSessionNudge);
 // week (sends under its correct weekKey), gates forward use if a send can't
 // complete. Same post-init load hook pattern as above.
 window.addEventListener('load', autoSendUnsentWeeks);
+// Barcode day-log overlay (packaged-food lane). Runs AFTER init's renderNRDailyLog
+// (registered later = fires later), overlaying the unified list when the day has
+// barcode items. Same post-init load-hook sibling pattern as above; init untouched.
+window.addEventListener('load', renderBarcodeDayLog);
 
 // One-tap share link (?p=<id>): fetch the stored profile from the Worker and
 // load it through the SAME routine the manual paste flow uses (no duplicated
