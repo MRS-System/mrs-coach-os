@@ -2410,7 +2410,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=24';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=25';
 }
 
 function exportClient(clientId) {
@@ -2418,7 +2418,7 @@ function exportClient(clientId) {
   var c = (database.clients || []).find(function(x){ return x.id === clientId; });
   if (!c) { toast("Client not found"); return; }
 
-  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=24";
+  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=25";
 
   var profileData = {
     id: c.id, name: c.name, age: c.age||"", gender: c.gender||"M",
@@ -2576,7 +2576,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=24',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=25',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -3711,7 +3711,7 @@ function printProgressReport(clientId) {
 
     // Footer with QR code
     +(function(){
-      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=24';
+      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=25';
       const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data='+encodeURIComponent(portalUrl)+'&bgcolor=0f0f0c&color=c9a227&format=png';
       return '<div class="footer-bar" style="display:flex;align-items:center;justify-content:space-between;gap:16px">'
         +'<div>'

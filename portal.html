@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=24 -->
+<!-- portal cache-buster v=25 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1826,18 +1826,20 @@ input[type=range]::-moz-range-thumb {
     </div>
 
     <div style="margin-bottom:12px">
-      <div style="font-size:11px;font-weight:700;color:var(--dim2);margin-bottom:6px;font-family:'Barlow Condensed',sans-serif;letter-spacing:.08em;text-transform:uppercase">What is this meal? <span style="color:var(--gold)">*</span></div>
-      <input type="text" id="nrContext" placeholder="e.g. grilled chicken bowl, Chipotle burrito, post-workout shake..."
+      <div style="font-size:11px;font-weight:700;color:var(--dim2);margin-bottom:6px;font-family:'Barlow Condensed',sans-serif;letter-spacing:.08em;text-transform:uppercase">What is this? <span style="color:var(--gold)">*</span></div>
+      <input type="text" id="nrContext" placeholder="e.g. grilled chicken bowl, Chipotle burrito, banana, protein bar..."
         style="width:100%;background:var(--black3);border:1px solid var(--border2);border-radius:10px;padding:12px 14px;color:var(--white);font-family:Barlow,sans-serif;font-size:13px;outline:none">
     </div>
 
     <div style="margin-bottom:16px">
-      <div style="font-size:11px;font-weight:700;color:var(--dim2);margin-bottom:6px;font-family:'Barlow Condensed',sans-serif;letter-spacing:.08em;text-transform:uppercase">Meal Timing</div>
-      <div style="display:flex;gap:8px">
+      <div style="font-size:11px;font-weight:700;color:var(--dim2);margin-bottom:6px;font-family:'Barlow Condensed',sans-serif;letter-spacing:.08em;text-transform:uppercase">What are you scanning?</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button id="nrTimingMeal" onclick="setNRTiming('meal')" class="yn-btn yes">🍽️ Meal</button>
         <button id="nrTimingPre" onclick="setNRTiming('pre')" class="yn-btn">🏋️ Pre-Workout</button>
         <button id="nrTimingPost" onclick="setNRTiming('post')" class="yn-btn">⚡ Post-Workout</button>
-        <button id="nrTimingMeal" onclick="setNRTiming('meal')" class="yn-btn yes">🍽️ Meal</button>
+        <button id="nrTimingSnack" onclick="setNRTiming('snack')" class="yn-btn">🍎 Snack</button>
       </div>
+      <div id="nrTimingHint" style="font-size:11px;color:var(--dim);line-height:1.5;margin-top:8px;font-family:Barlow,sans-serif">A full plate. Judged on balance: protein, carbs, veggies.</div>
     </div>
 
     <div style="flex:1"></div>
@@ -2618,12 +2620,24 @@ let nrTiming = 'meal';
 let nrPendingResult = null;
 let nrPendingThumb = null;
 
+// Teaching label per scan context (kept in sync with the Worker /nutri scoring
+// standards). Note standing debt: these context strings are free values known
+// independently here and in the Worker timingNote branch; an unknown value
+// degrades safely to "regular meal" scoring server-side.
+const NR_TIMING_HINTS = {
+  meal: 'A full plate. Judged on balance: protein, carbs, veggies.',
+  pre: 'Fuel before training. Easy energy, light on the stomach.',
+  post: 'Recovery after training. Protein to rebuild, carbs to refill.',
+  snack: 'Between meals. A smart choice to bridge the gap — not junk.'
+};
 function setNRTiming(t) {
   nrTiming = t;
-  ['pre','post','meal'].forEach(x => {
+  ['pre','post','meal','snack'].forEach(x => {
     const btn = document.getElementById('nrTiming' + x.charAt(0).toUpperCase() + x.slice(1));
     if(btn) btn.className = 'yn-btn' + (x === t ? ' yes' : '');
   });
+  const hint = document.getElementById('nrTimingHint');
+  if (hint) hint.textContent = NR_TIMING_HINTS[t] || '';
 }
 
 function openNutriReader() {
@@ -3102,6 +3116,7 @@ function renderBarcodeConfirm(data) {
     + '<input id="bcQty" type="number" inputmode="decimal" min="0" step="' + qtyStep + '" value="' + qtyDefault + '" oninput="bcRecompute()" style="flex:1;background:var(--black3);border:1px solid var(--border2);border-radius:8px;color:var(--white);font-size:16px;padding:10px;text-align:center">'
     + '</div>'
     + '<div class="nr-macro-row" style="margin-bottom:16px"><div class="nr-macro"><div class="nr-macro-val" id="bcMP" style="color:var(--gold)">–</div><div class="nr-macro-label">Protein</div></div><div class="nr-macro"><div class="nr-macro-val" id="bcMC" style="color:#60a5fa">–</div><div class="nr-macro-label">Carbs</div></div><div class="nr-macro"><div class="nr-macro-val" id="bcMF" style="color:#f97316">–</div><div class="nr-macro-label">Fat</div></div><div class="nr-macro"><div class="nr-macro-val" id="bcMCal">–</div><div class="nr-macro-label">Calories</div></div></div>'
+    + '<div style="font-size:11px;color:var(--dim);text-align:center;margin-bottom:10px;line-height:1.5;font-family:Barlow,sans-serif">Awareness only — nothing is logged until you tap Log This Item.</div>'
     + '<button onclick="logBarcodeFromConfirm()" style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:12px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer">Log This Item</button>'
     + '<button onclick="openBarcodeScanner()" style="width:100%;margin-top:8px;padding:12px;background:transparent;border:1px solid var(--border2);border-radius:10px;color:var(--dim2);font-family:Barlow Condensed,sans-serif;font-size:13px;font-weight:700;letter-spacing:.08em;cursor:pointer">Wrong item? Scan again</button>';
   bcRecompute();
