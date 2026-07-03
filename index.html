@@ -1991,6 +1991,2023 @@ function saveSessionNote(clientId) {
 // ══════════════════════════════════════════════════════════════════
 // PROGRAM GENERATOR
 // ══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// BUILD #1 — LIBRARY INJECTION (non-protected)
+// Pre-filters the exercise library to the eligible set for THIS client
+// and groups by slot, so weekPrompt() can inject a per-slot candidate
+// menu. The model may ONLY choose from the injected exercise names.
+// MRS_EXERCISE_LIB below is mrs_exercise_library.json embedded verbatim.
+// ═══════════════════════════════════════════════════════════════════
+const MRS_EXERCISE_LIB = {
+  "_meta": {
+    "source": "MRS_Plug_Play_fixed.xlsx / ExLib",
+    "version": "1.0",
+    "count": 70,
+    "avatars_canonical": [
+      "Comeback",
+      "Workhorse",
+      "Built Different",
+      "OG",
+      "Builder",
+      "Apex"
+    ],
+    "injury_flags": [
+      "Low Back",
+      "Shoulder",
+      "Knee",
+      "Foot / Ankle",
+      "Hip Mobility",
+      "Thoracic"
+    ],
+    "tag_values": {
+      "ok": "safe/therapeutic",
+      "caution": "modify or reduce range",
+      "avoid": "exclude for this flag"
+    },
+    "note": "name field is the verbatim injection string. injury key 'Foot / Ankle' matches code spelling."
+  },
+  "exercises": [
+    {
+      "id": 1,
+      "name": "Goblet Squat",
+      "pattern": "Squat",
+      "slot": "A",
+      "tier": "1 — Foundation",
+      "equipment": "DB / KB",
+      "cue": "Hold weight at chest, push knees out over pinky toes, keep chest tall — heels stay flat the entire set.",
+      "rationale": "The counterbalance naturally creates an upright torso — self-correcting for forward lean and the safest entry point for the loaded squat pattern.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "caution",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "caution",
+        "Thoracic": "ok"
+      },
+      "notes": "Knee mod: elevate heels on plates. Ankle mod: same."
+    },
+    {
+      "id": 2,
+      "name": "Box Squat",
+      "pattern": "Squat",
+      "slot": "A",
+      "tier": "1 — Foundation",
+      "equipment": "Barbell / DB",
+      "cue": "Sit back to the box with control, pause briefly without relaxing, drive through heels to stand — box height sets the range of motion.",
+      "rationale": "The box teaches proper squat mechanics by breaking the eccentric-concentric stretch reflex, reduces knee shear force, and is ideal for knee and low back clients.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "caution",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Low back mod: higher box. Knee mod: heel elevation + higher box."
+    },
+    {
+      "id": 3,
+      "name": "Trap Bar Squat",
+      "pattern": "Squat",
+      "slot": "A",
+      "tier": "2 — Intermediate",
+      "equipment": "Trap Bar",
+      "cue": "Stand centered in the bar, push the floor away rather than pulling the bar up, lock hips out completely at the top with a glute squeeze.",
+      "rationale": "The trap bar shifts load from the spine to the hips and legs, dramatically reducing lumbar shear — the most spine-friendly barbell squat variation available.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "caution",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "caution",
+        "Thoracic": "ok"
+      },
+      "notes": "Best all-around primary squat for general population."
+    },
+    {
+      "id": 4,
+      "name": "Back Squat",
+      "pattern": "Squat",
+      "slot": "A",
+      "tier": "3 — Advanced",
+      "equipment": "Barbell",
+      "cue": "Bar sits on upper traps, brace hard before unracking, squat to depth with knees tracking toes — do not let lower back round at the bottom.",
+      "rationale": "The gold standard bilateral lower body movement for strength and muscle development — high neural demand and full posterior chain engagement.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "caution",
+        "Built Different": "caution",
+        "OG": "avoid",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "avoid",
+        "Shoulder": "caution",
+        "Knee": "caution",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "caution",
+        "Thoracic": "avoid"
+      },
+      "notes": "Elder contraindicated. Low back: use only with excellent hip mobility."
+    },
+    {
+      "id": 5,
+      "name": "Front Squat",
+      "pattern": "Squat",
+      "slot": "A",
+      "tier": "3 — Advanced",
+      "equipment": "Barbell",
+      "cue": "Elbows high and forward throughout — if elbows drop the bar comes forward, brace before descent and stay as upright as possible.",
+      "rationale": "Front loading forces an upright torso and high core demand — excellent for quad development and Olympic lift preparation.",
+      "avatars": {
+        "Comeback": "caution",
+        "Workhorse": "caution",
+        "Built Different": "caution",
+        "OG": "avoid",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "caution",
+        "Shoulder": "avoid",
+        "Knee": "caution",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "caution",
+        "Thoracic": "avoid"
+      },
+      "notes": "Requires significant wrist and shoulder mobility."
+    },
+    {
+      "id": 6,
+      "name": "Hack Squat Machine",
+      "pattern": "Squat",
+      "slot": "A/B",
+      "tier": "2 — Intermediate",
+      "equipment": "Machine",
+      "cue": "Place feet shoulder width at mid-platform, lower until thighs are parallel, drive through full foot — do not lock out knees aggressively at the top.",
+      "rationale": "Machine stability removes balance demand allowing maximum quad loading — ideal for hypertrophy focus and clients with mobility restrictions.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "caution",
+        "Shoulder": "ok",
+        "Knee": "caution",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "caution",
+        "Thoracic": "ok"
+      },
+      "notes": "Low back mod: reduce range. Knee mod: higher foot placement."
+    },
+    {
+      "id": 7,
+      "name": "Leg Press",
+      "pattern": "Squat",
+      "slot": "B",
+      "tier": "1 — Foundation",
+      "equipment": "Machine",
+      "cue": "Feet shoulder width at mid-plate, lower until 90 degrees without lower back rounding off the pad — do not lock knees at the top.",
+      "rationale": "Allows heavy quad loading with minimal spinal demand — excellent for Elder avatar, injury protocols, and hypertrophy work when primary squat is loaded heavy.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "caution"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "caution",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Operator and Apex use as accessory not primary."
+    },
+    {
+      "id": 8,
+      "name": "Split Squat",
+      "pattern": "Squat — Unilateral",
+      "slot": "C",
+      "tier": "1 — Foundation",
+      "equipment": "Bodyweight / DB",
+      "cue": "Lower straight down — front shin stays vertical and back knee drops directly under the hip — do not lunge forward.",
+      "rationale": "Exposes single leg strength asymmetries in a stable environment before loading — essential screening and corrective movement for all avatars.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "caution",
+        "Shoulder": "ok",
+        "Knee": "caution",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "caution",
+        "Thoracic": "ok"
+      },
+      "notes": "Knee mod: shorter stride, reduce range. Low back: brace harder."
+    },
+    {
+      "id": 9,
+      "name": "Bulgarian Split Squat",
+      "pattern": "Squat — Unilateral",
+      "slot": "C",
+      "tier": "2 — Intermediate",
+      "equipment": "DB / Barbell",
+      "cue": "Rear foot elevated on bench, lower straight down with control — front shin stays vertical and hip flexor of rear leg stretches fully.",
+      "rationale": "Eliminates rear leg assistance creating a true single leg challenge — the highest unilateral strength exercise available for quad and glute development.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "caution",
+        "Shoulder": "ok",
+        "Knee": "caution",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "caution",
+        "Thoracic": "ok"
+      },
+      "notes": "Elder: use only if stable on two feet first. Knee: heel elevation."
+    },
+    {
+      "id": 10,
+      "name": "Reverse Lunge",
+      "pattern": "Squat — Unilateral",
+      "slot": "C",
+      "tier": "1 — Foundation",
+      "equipment": "Bodyweight / DB",
+      "cue": "Step directly back and lower the back knee toward the floor — front knee does not travel past the toes and torso stays upright.",
+      "rationale": "Safer than forward lunge as deceleration forces are reduced — the preferred lunge for knee and low back clients and all corrective phase work.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Best lunge variation for knee protocol clients."
+    },
+    {
+      "id": 11,
+      "name": "Step-Up",
+      "pattern": "Squat — Unilateral",
+      "slot": "C",
+      "tier": "1 — Foundation",
+      "equipment": "Box / DB",
+      "cue": "Drive through the heel of the working leg only — do not push off the back foot, and the working glute should be loaded the entire movement.",
+      "rationale": "Trains single leg strength and balance in a controlled range — box height determines difficulty and can be adjusted for any fitness level.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "caution",
+        "Thoracic": "ok"
+      },
+      "notes": "Foot/Ankle: low box only, ensure stable landing."
+    },
+    {
+      "id": 12,
+      "name": "Pistol Squat Progression",
+      "pattern": "Squat — Unilateral",
+      "slot": "C",
+      "tier": "3 — Advanced",
+      "equipment": "Bodyweight / TRX",
+      "cue": "Use TRX or support initially — hinge at hip of standing leg, extend opposite leg forward, lower under full control to full depth.",
+      "rationale": "The highest single leg squat progression — builds extreme unilateral strength, mobility, and balance simultaneously.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "caution",
+        "Built Different": "caution",
+        "OG": "avoid",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "avoid",
+        "Shoulder": "ok",
+        "Knee": "avoid",
+        "Foot / Ankle": "avoid",
+        "Hip Mobility": "avoid",
+        "Thoracic": "ok"
+      },
+      "notes": "Not for Elder, knee, or low back clients."
+    },
+    {
+      "id": 13,
+      "name": "Romanian Deadlift — Dumbbell",
+      "pattern": "Hinge",
+      "slot": "A",
+      "tier": "1 — Foundation",
+      "equipment": "DB",
+      "cue": "Push hips directly back toward the wall behind you, maintain flat back throughout, feel hamstrings load before returning — moment back rounds the set is over.",
+      "rationale": "Teaches the hip hinge pattern under safe load — the most important movement pattern for posterior chain development and low back protection.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Entry hinge for all avatars. Low back: reduce range before rounding."
+    },
+    {
+      "id": 14,
+      "name": "Romanian Deadlift — Barbell",
+      "pattern": "Hinge",
+      "slot": "A",
+      "tier": "2 — Intermediate",
+      "equipment": "Barbell",
+      "cue": "Same as DB version but bar stays close to legs throughout — drag it up the thighs on the way back up and keep lats engaged to prevent bar drift.",
+      "rationale": "Barbell RDL allows heavier loading of the hip hinge pattern — primary posterior chain developer for intermediate and advanced programs.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "caution",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "caution"
+      },
+      "notes": "Elder: stay with DB version unless very stable."
+    },
+    {
+      "id": 15,
+      "name": "Trap Bar Deadlift",
+      "pattern": "Hinge",
+      "slot": "A",
+      "tier": "2 — Intermediate",
+      "equipment": "Trap Bar",
+      "cue": "Stand centered, push floor away rather than pulling bar up, lock hips out fully at top with glute squeeze — do not hyperextend lumbar at lockout.",
+      "rationale": "Reduces spinal shear versus conventional deadlift while allowing maximum loading — the best deadlift variation for general population and low back clients.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Best primary hinge for most clients. Universal recommendation."
+    },
+    {
+      "id": 16,
+      "name": "Conventional Deadlift",
+      "pattern": "Hinge",
+      "slot": "A",
+      "tier": "3 — Advanced",
+      "equipment": "Barbell",
+      "cue": "Set lats before pulling, brace 360 degrees before bar leaves floor, drive floor away and keep bar against legs throughout.",
+      "rationale": "The foundational strength movement — highest systemic demand of any exercise and the most muscle mass recruited in a single movement.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "caution",
+        "Built Different": "caution",
+        "OG": "avoid",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "avoid",
+        "Shoulder": "ok",
+        "Knee": "caution",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "caution",
+        "Thoracic": "caution"
+      },
+      "notes": "Elder contraindicated. Low back: only with excellent mechanics."
+    },
+    {
+      "id": 17,
+      "name": "Sumo Deadlift",
+      "pattern": "Hinge",
+      "slot": "A",
+      "tier": "2 — Intermediate",
+      "equipment": "Barbell",
+      "cue": "Wide stance, toes out 45 degrees, grip inside the legs — push knees out hard and think about spreading the floor apart as you drive up.",
+      "rationale": "Reduced range of motion and more upright torso than conventional — excellent for Architect avatar and clients with hip mobility advantages.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "caution",
+        "Shoulder": "ok",
+        "Knee": "caution",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "caution",
+        "Thoracic": "ok"
+      },
+      "notes": "Architect primary hinge variation. Emphasizes glutes and adductors."
+    },
+    {
+      "id": 18,
+      "name": "Hip Thrust — Barbell",
+      "pattern": "Hinge",
+      "slot": "A/B",
+      "tier": "2 — Intermediate",
+      "equipment": "Barbell / Bench",
+      "cue": "Upper back on bench, bar across hip crease with pad, drive through full foot and squeeze glutes hard at the top — hold one second at lockout every rep.",
+      "rationale": "The highest glute activation exercise available — directly targets the gluteus maximus through full hip extension and is non-negotiable for Architect protocol.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "caution"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Architect primary movement. All avatars benefit. Apex: load heavy."
+    },
+    {
+      "id": 19,
+      "name": "Hip Thrust — Dumbbell",
+      "pattern": "Hinge",
+      "slot": "B",
+      "tier": "1 — Foundation",
+      "equipment": "DB / Bench",
+      "cue": "Same as barbell version — DB sits across hip crease, drive through full foot, squeeze glutes at top for a full second.",
+      "rationale": "Entry point for the hip thrust pattern — accessible for all fitness levels and the correct regression before barbell loading.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Best entry for Elder and Restoration protocols."
+    },
+    {
+      "id": 20,
+      "name": "Good Morning",
+      "pattern": "Hinge",
+      "slot": "B",
+      "tier": "3 — Advanced",
+      "equipment": "Barbell",
+      "cue": "Bar on upper traps, hinge at hip with soft knee bend until back is parallel to floor — spine stays neutral throughout, no rounding.",
+      "rationale": "Builds posterior chain strength under extreme hip hinge demand — develops the spinal erectors and hamstrings that support the conventional deadlift.",
+      "avatars": {
+        "Comeback": "caution",
+        "Workhorse": "caution",
+        "Built Different": "avoid",
+        "OG": "avoid",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "avoid",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "caution",
+        "Thoracic": "caution"
+      },
+      "notes": "Advanced only. Low back and Elder contraindicated."
+    },
+    {
+      "id": 21,
+      "name": "Single Leg RDL — DB",
+      "pattern": "Hinge — Unilateral",
+      "slot": "C",
+      "tier": "2 — Intermediate",
+      "equipment": "DB",
+      "cue": "Hinge from hip of standing leg, back leg rises as counterbalance — keep hips level and do not let non-working hip rotate open.",
+      "rationale": "Combines hip hinge mechanics with single leg balance and hip stability — exposes asymmetries and builds the unilateral posterior chain strength that protects the knee.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Bodyweight first for Elder and corrective phase."
+    },
+    {
+      "id": 22,
+      "name": "Single Leg Hip Thrust",
+      "pattern": "Hinge — Unilateral",
+      "slot": "C",
+      "tier": "2 — Intermediate",
+      "equipment": "Bodyweight / DB",
+      "cue": "Same setup as bilateral, one leg extended — drive through working heel only and keep hips level, do not allow working hip to drop.",
+      "rationale": "Maximizes unilateral glute loading through full hip extension — essential for Architect protocol and addressing glute asymmetry.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Non-negotiable for Architect specialization day."
+    },
+    {
+      "id": 23,
+      "name": "Cable Pull-Through",
+      "pattern": "Hinge",
+      "slot": "B/D",
+      "tier": "1 — Foundation",
+      "equipment": "Cable",
+      "cue": "Face away from cable, hinge back between legs to stretch hamstrings, drive hips forward to stand — squeeze glutes at lockout.",
+      "rationale": "Teaches hip hinge with continuous cable tension — excellent for clients who cannot feel their glutes in deadlift patterns and all corrective phase clients.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Best hinge teaching tool. Use early in all programs."
+    },
+    {
+      "id": 24,
+      "name": "Kettlebell Swing",
+      "pattern": "Hinge — Power",
+      "slot": "F / Athletic",
+      "tier": "2 — Intermediate",
+      "equipment": "KB",
+      "cue": "Hike the bell back between legs with hip hinge, then explosively drive hips forward — the arms float up from hip power, not a shoulder raise.",
+      "rationale": "Trains explosive hip extension and posterior chain power — combines strength, conditioning, and power development in a single movement.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "caution",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Elder: use light KB and master pattern first. Low back: hip hinge must be clean."
+    },
+    {
+      "id": 25,
+      "name": "Dumbbell Bench Press",
+      "pattern": "Push — Horizontal",
+      "slot": "B",
+      "tier": "1 — Foundation",
+      "equipment": "DB / Bench",
+      "cue": "Lower dumbbells with elbows at 45 degrees from body — not flared, not tucked — press up and slightly together at the top.",
+      "rationale": "Builds horizontal pressing strength with independent arm loading that corrects bilateral asymmetry and is safer for the shoulder than barbell pressing.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Shoulder mod: reduce range of motion. Use neutral grip if impingement."
+    },
+    {
+      "id": 26,
+      "name": "Dumbbell Incline Press",
+      "pattern": "Push — Horizontal",
+      "slot": "B",
+      "tier": "1 — Foundation",
+      "equipment": "DB / Bench",
+      "cue": "Set bench 30–45 degrees, press up and slightly together — incline angle reduces shoulder impingement risk versus flat pressing.",
+      "rationale": "Upper chest development with reduced shoulder stress — the recommended pressing variation for shoulder protocol clients and all corrective phase work.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "caution"
+      },
+      "notes": "Best entry pressing variation for shoulder issues."
+    },
+    {
+      "id": 27,
+      "name": "Barbell Bench Press",
+      "pattern": "Push — Horizontal",
+      "slot": "A/B",
+      "tier": "3 — Advanced",
+      "equipment": "Barbell / Bench",
+      "cue": "Retract scapulae before lowering bar, touch chest with control, drive feet into floor as you press — bar path should arc slightly back over the eyes.",
+      "rationale": "Maximum horizontal pressing load — the primary upper body strength exercise for advanced programming.",
+      "avatars": {
+        "Comeback": "caution",
+        "Workhorse": "ok",
+        "Built Different": "caution",
+        "OG": "avoid",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "avoid",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Shoulder flag: do not use. Elder contraindicated."
+    },
+    {
+      "id": 28,
+      "name": "Landmine Press",
+      "pattern": "Push — Horizontal/Vertical",
+      "slot": "B",
+      "tier": "1 — Foundation",
+      "equipment": "Barbell / Landmine",
+      "cue": "Press the bar up and forward in its natural arc — keep core braced throughout and do not let lower back arch as the weight moves.",
+      "rationale": "The most shoulder-friendly pressing variation — arc of motion follows natural shoulder mechanics and completely avoids impingement position.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Go-to pressing variation for shoulder protocol clients."
+    },
+    {
+      "id": 29,
+      "name": "Push-Up",
+      "pattern": "Push — Horizontal",
+      "slot": "B/D",
+      "tier": "1 — Foundation",
+      "equipment": "Bodyweight",
+      "cue": "Full body tension from head to heel, lower chest to within one inch of floor, fully extend arms at top — no sagging hips.",
+      "rationale": "The most honest upper body strength test — requires relative strength and full body tension simultaneously.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Regression: incline push-up. Progression: weighted vest or archer push-up."
+    },
+    {
+      "id": 30,
+      "name": "Cable Chest Fly",
+      "pattern": "Push — Horizontal",
+      "slot": "D",
+      "tier": "2 — Intermediate",
+      "equipment": "Cable",
+      "cue": "Slight forward lean, slight elbow bend throughout — feel the stretch at the bottom and squeeze at the center, do not let the weight pull you back.",
+      "rationale": "Isolates the pectoral muscle through full range of motion — builds chest fullness that compound pressing cannot achieve alone.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Shoulder mod: reduce range, keep elbows higher."
+    },
+    {
+      "id": 31,
+      "name": "Dumbbell Overhead Press",
+      "pattern": "Push — Vertical",
+      "slot": "B",
+      "tier": "2 — Intermediate",
+      "equipment": "DB",
+      "cue": "Press straight up with a slight arc inward at the top — ribs stay down and core stays braced, do not hyperextend lumbar to assist the press.",
+      "rationale": "Vertical pressing strength and overhead stability — requires full shoulder mobility and is a key movement for athletic performance.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "caution",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "avoid",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "avoid"
+      },
+      "notes": "Shoulder flag: do not use. Architect and Elder: landmine press instead."
+    },
+    {
+      "id": 32,
+      "name": "Arnold Press",
+      "pattern": "Push — Vertical",
+      "slot": "B/D",
+      "tier": "2 — Intermediate",
+      "equipment": "DB",
+      "cue": "Start with palms facing you, rotate to palms forward as you press — full rotation happens in the bottom half of the movement.",
+      "rationale": "Trains shoulder through a greater rotational range than standard overhead press — excellent for shoulder health and deltoid development.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "avoid"
+      },
+      "notes": "Shoulder caution: only if full ROM is available without pain."
+    },
+    {
+      "id": 33,
+      "name": "Landmine Push Press",
+      "pattern": "Push — Vertical",
+      "slot": "B",
+      "tier": "2 — Intermediate",
+      "equipment": "Barbell / Landmine",
+      "cue": "Use a slight leg drive to initiate the press — arc of the bar follows the landmine track, core braced throughout.",
+      "rationale": "Introduces power development into pressing — the leg drive teaches force transfer from lower to upper body in a shoulder-safe arc.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "caution"
+      },
+      "notes": "Best vertical press progression for shoulder clients."
+    },
+    {
+      "id": 34,
+      "name": "Seated Cable Row",
+      "pattern": "Pull — Horizontal",
+      "slot": "B",
+      "tier": "1 — Foundation",
+      "equipment": "Cable",
+      "cue": "Drive elbows back past hips, squeeze shoulder blades at end of every rep — torso stays still, all movement from arms and upper back.",
+      "rationale": "Builds horizontal pulling strength and scapular retraction in a supported position — eliminates lumbar demand and is safe for all avatars.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Best entry row for all avatars. Shoulder mod: neutral grip attachment."
+    },
+    {
+      "id": 35,
+      "name": "Chest-Supported DB Row",
+      "pattern": "Pull — Horizontal",
+      "slot": "B",
+      "tier": "1 — Foundation",
+      "equipment": "DB / Incline Bench",
+      "cue": "Lie prone on incline bench, let arms hang fully at bottom to stretch lats, row to hip level — retract shoulder blades at the top.",
+      "rationale": "Completely eliminates lumbar demand — the safest rowing variation for low back clients and the best way to isolate upper back without compensation.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Primary row for all low back clients. No lumbar demand."
+    },
+    {
+      "id": 36,
+      "name": "Dumbbell Row — Single Arm",
+      "pattern": "Pull — Horizontal",
+      "slot": "B/C",
+      "tier": "1 — Foundation",
+      "equipment": "DB / Bench",
+      "cue": "Brace on bench with opposite arm, row dumbbell to hip level — elbow stays close to body and shoulder blade retracts fully at the top.",
+      "rationale": "Unilateral rowing exposes side-to-side strength asymmetry and allows heavier loading per side versus bilateral variations.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Shoulder: neutral grip DB, do not pull above hip level."
+    },
+    {
+      "id": 37,
+      "name": "Barbell Bent-Over Row",
+      "pattern": "Pull — Horizontal",
+      "slot": "A/B",
+      "tier": "3 — Advanced",
+      "equipment": "Barbell",
+      "cue": "Hinge to 45–60 degrees, brace before each rep, row bar to lower sternum — maintain hinge position throughout without standing up.",
+      "rationale": "Heavy horizontal loading with high posterior chain demand — develops serious back thickness and strength.",
+      "avatars": {
+        "Comeback": "caution",
+        "Workhorse": "ok",
+        "Built Different": "caution",
+        "OG": "avoid",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "avoid",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "caution",
+        "Thoracic": "caution"
+      },
+      "notes": "Low back and Elder contraindicated. Use chest-supported version instead."
+    },
+    {
+      "id": 38,
+      "name": "TRX Row",
+      "pattern": "Pull — Horizontal",
+      "slot": "B/D",
+      "tier": "1 — Foundation",
+      "equipment": "TRX",
+      "cue": "Body angle determines difficulty — feet forward increases load, keep body straight from head to heel and retract scapulae at the top.",
+      "rationale": "Scalable horizontal row requiring zero equipment beyond TRX — excellent for all fitness levels and joint-friendly for shoulder protocol clients.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Most accessible row variation. Angle determines difficulty."
+    },
+    {
+      "id": 39,
+      "name": "Lat Pulldown",
+      "pattern": "Pull — Vertical",
+      "slot": "B",
+      "tier": "1 — Foundation",
+      "equipment": "Cable / Machine",
+      "cue": "Lean back slightly, pull bar to upper chest with elbows driving down and back — do not round forward or use momentum.",
+      "rationale": "Builds vertical pulling strength and lat development in a controlled position — the correct starting point before pull-up progressions.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Shoulder mod: use neutral grip attachment. Do not pull behind neck."
+    },
+    {
+      "id": 40,
+      "name": "Neutral Grip Lat Pulldown",
+      "pattern": "Pull — Vertical",
+      "slot": "B",
+      "tier": "1 — Foundation",
+      "equipment": "Cable",
+      "cue": "Same mechanics as standard pulldown — neutral grip reduces shoulder rotation demand and is the recommended variation for shoulder protocol clients.",
+      "rationale": "Neutral grip eliminates shoulder impingement risk in the pulldown — the primary vertical pull for shoulder clients.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Go-to vertical pull for shoulder protocol."
+    },
+    {
+      "id": 41,
+      "name": "Pull-Up",
+      "pattern": "Pull — Vertical",
+      "slot": "A/B",
+      "tier": "2 — Intermediate",
+      "equipment": "Pull-Up Bar",
+      "cue": "Dead hang at bottom, drive elbows down and back to pull chest to bar — do not kip or swing.",
+      "rationale": "The highest relative strength vertical pull — requires and builds serious back and arm strength simultaneously.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "caution",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "caution"
+      },
+      "notes": "Regression: lat pulldown or banded pull-up. Elder: lat pulldown only."
+    },
+    {
+      "id": 42,
+      "name": "Chin-Up",
+      "pattern": "Pull — Vertical",
+      "slot": "B",
+      "tier": "2 — Intermediate",
+      "equipment": "Pull-Up Bar",
+      "cue": "Supinated grip, dead hang at bottom, pull chin over bar — supination increases bicep involvement versus pull-up.",
+      "rationale": "Supinated grip increases bicep contribution — easier than pull-up for most clients and builds arm size alongside back strength.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "caution",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "caution"
+      },
+      "notes": "Often easier than pull-up. Good stepping stone."
+    },
+    {
+      "id": 43,
+      "name": "Cable Straight Arm Pulldown",
+      "pattern": "Pull — Vertical",
+      "slot": "D",
+      "tier": "2 — Intermediate",
+      "equipment": "Cable",
+      "cue": "Arms straight throughout — pull bar from overhead to thighs by driving elbows down, focus on feeling lats contract at the bottom.",
+      "rationale": "Isolates the lats without bicep involvement — excellent for developing the mind-muscle connection with the lats.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Shoulder: keep range within comfortable limit."
+    },
+    {
+      "id": 44,
+      "name": "Face Pull",
+      "pattern": "Shoulder — Accessory",
+      "slot": "D",
+      "tier": "1 — Foundation",
+      "equipment": "Cable",
+      "cue": "Pull directly to face with elbows finishing high and wide — pause one full second at maximum external rotation before returning.",
+      "rationale": "Directly combats the internal rotation dominance from pressing and daily life — mandatory for shoulder health in all programs.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Should appear in every program. Non-negotiable shoulder health exercise."
+    },
+    {
+      "id": 45,
+      "name": "Lateral Raise",
+      "pattern": "Shoulder — Accessory",
+      "slot": "D",
+      "tier": "1 — Foundation",
+      "equipment": "DB / Cable",
+      "cue": "Slight forward lean, lead with elbows not wrists — raise to shoulder height only, do not shrug at the top.",
+      "rationale": "Isolates the medial deltoid for shoulder width development — the primary isolation exercise for deltoid aesthetics.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Shoulder caution: pain-free range only. Use cable for constant tension."
+    },
+    {
+      "id": 46,
+      "name": "Rear Delt Fly",
+      "pattern": "Shoulder — Accessory",
+      "slot": "D",
+      "tier": "1 — Foundation",
+      "equipment": "DB / Cable",
+      "cue": "Hinge forward, arms hang with slight elbow bend — raise to shoulder height by squeezing rear delts and retracting shoulder blades.",
+      "rationale": "Targets posterior deltoid and rotator cuff stabilizers — directly addresses the postural deficits common in desk workers and former athletes.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Essential for posture correction. Pairs well with face pulls."
+    },
+    {
+      "id": 47,
+      "name": "Band Pull-Apart",
+      "pattern": "Shoulder — Accessory",
+      "slot": "D / Warm-Up",
+      "tier": "1 — Foundation",
+      "equipment": "Band",
+      "cue": "Arms straight, lead with pinkies to externally rotate — squeeze shoulder blades at end range of every rep.",
+      "rationale": "Activates posterior shoulder stabilizers before pressing — the single most important shoulder warm-up exercise.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Warm-up and accessory. Include in shoulder protocol."
+    },
+    {
+      "id": 48,
+      "name": "Dead Bug",
+      "pattern": "Core — Anti-Extension",
+      "slot": "E",
+      "tier": "1 — Foundation",
+      "equipment": "Bodyweight",
+      "cue": "Press lower back completely flat into floor before moving — lower opposite arm and leg simultaneously, stop before back lifts.",
+      "rationale": "Trains anterior core bracing in a deloaded position — the foundational core exercise that directly transfers to spinal stability under every loaded movement.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Core staple for all programs. Progression: add dumbbell pullover."
+    },
+    {
+      "id": 49,
+      "name": "Pallof Press",
+      "pattern": "Core — Anti-Rotation",
+      "slot": "E",
+      "tier": "1 — Foundation",
+      "equipment": "Cable / Band",
+      "cue": "Brace like you are about to take a punch, press out to full extension and hold two seconds — resist every inch of rotation.",
+      "rationale": "Trains anti-rotation stability — the ability to resist rotational forces protects the lumbar spine in all asymmetrical movements.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Non-negotiable core exercise for all avatars and programs."
+    },
+    {
+      "id": 50,
+      "name": "Plank",
+      "pattern": "Core — Anti-Extension",
+      "slot": "E",
+      "tier": "1 — Foundation",
+      "equipment": "Bodyweight",
+      "cue": "Full body tension from head to heel, push floor away with forearms, squeeze glutes — a plank is a full body exercise not just shoulders and abs.",
+      "rationale": "Isometric anterior core endurance — builds the sustained bracing ability needed throughout every loaded session.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Progression: shoulder tap, body saw, weighted plank."
+    },
+    {
+      "id": 51,
+      "name": "Side Plank",
+      "pattern": "Core — Anti-Lateral Flexion",
+      "slot": "E",
+      "tier": "1 — Foundation",
+      "equipment": "Bodyweight",
+      "cue": "Straight line from head to feet, drive hip up away from floor — do not let the hip sag or rotate forward.",
+      "rationale": "Trains lateral core stability and hip abductor endurance — directly supports knee and low back health.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Essential for knee and low back protocol clients."
+    },
+    {
+      "id": 52,
+      "name": "Suitcase Carry",
+      "pattern": "Core — Anti-Lateral Flexion",
+      "slot": "E",
+      "tier": "1 — Foundation",
+      "equipment": "DB / KB",
+      "cue": "Hold weight at one side and resist every urge to lean toward it — torso stays completely vertical and shoulder stays packed.",
+      "rationale": "Trains lateral core stability under a loaded walking pattern — directly transfers to real-world unilateral loading demands.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Shoulder: keep loaded arm locked, no overhead reaching."
+    },
+    {
+      "id": 53,
+      "name": "Ab Wheel Rollout",
+      "pattern": "Core — Anti-Extension",
+      "slot": "E",
+      "tier": "2 — Intermediate",
+      "equipment": "Ab Wheel",
+      "cue": "Start from knees, brace hard before rolling out — roll only as far as you can maintain a flat back, pause and return with control.",
+      "rationale": "The highest difficulty anti-extension core exercise — requires and builds extreme anterior core strength and shoulder stability.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "caution",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "caution",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "caution"
+      },
+      "notes": "Low back and Elder: master plank first. Progress gradually."
+    },
+    {
+      "id": 54,
+      "name": "Landmine Rotation",
+      "pattern": "Core — Anti-Rotation",
+      "slot": "E",
+      "tier": "2 — Intermediate",
+      "equipment": "Barbell / Landmine",
+      "cue": "Arms slightly bent, rotate the bar from hip to hip using your core — hips and feet stay square, do not rotate the lower body.",
+      "rationale": "Trains rotational power and anti-rotation stability simultaneously — directly transfers to athletic performance and sport-specific movement.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "caution",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "caution",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "caution",
+        "Thoracic": "ok"
+      },
+      "notes": "Athletic programs primarily. Low back: limit range."
+    },
+    {
+      "id": 55,
+      "name": "Copenhagen Plank",
+      "pattern": "Core — Anti-Lateral Flexion",
+      "slot": "E",
+      "tier": "3 — Advanced",
+      "equipment": "Bench",
+      "cue": "Top leg on bench, bottom leg hanging — lift hip off floor and hold straight line, do not let pelvis rotate forward.",
+      "rationale": "The most demanding lateral core and hip adductor exercise — builds extreme lateral stability that supports knee health and athletic performance.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "caution",
+        "OG": "avoid",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "avoid",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Elder and knee contraindicated. Advanced programs only."
+    },
+    {
+      "id": 56,
+      "name": "Farmer Carry",
+      "pattern": "Carry",
+      "slot": "F",
+      "tier": "1 — Foundation",
+      "equipment": "DB / KB",
+      "cue": "Stand tall, shoulders back and down, core braced — walk with controlled steps and do not let shoulders creep toward ears.",
+      "rationale": "Builds grip strength, core stability, and postural endurance simultaneously — the most transferable loaded carry for daily life and metabolic conditioning.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Finisher and Slot E staple. Shoulder: keep arms straight down."
+    },
+    {
+      "id": 57,
+      "name": "Overhead Carry",
+      "pattern": "Carry",
+      "slot": "F",
+      "tier": "3 — Advanced",
+      "equipment": "KB / DB",
+      "cue": "Lock arm overhead with elbow straight and shoulder packed — wrist stays over shoulder the entire carry.",
+      "rationale": "Demands extreme shoulder stability and core anti-rotation under a walking pattern — directly transfers to overhead athletic performance.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "caution",
+        "Built Different": "caution",
+        "OG": "avoid",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "avoid",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "avoid"
+      },
+      "notes": "Shoulder flag: do not use. Elder contraindicated."
+    },
+    {
+      "id": 58,
+      "name": "Bear Hug Carry",
+      "pattern": "Carry",
+      "slot": "F",
+      "tier": "1 — Foundation",
+      "equipment": "Sandbag / Plate",
+      "cue": "Hug the implement tight to your chest, elbows in — walk with control and maintain upright posture.",
+      "rationale": "Loads the anterior core and upper back simultaneously — the most accessible carry for clients who cannot grip or have shoulder restrictions.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Best carry for shoulder clients. Easy to scale."
+    },
+    {
+      "id": 59,
+      "name": "Box Jump",
+      "pattern": "Power",
+      "slot": "Athletic",
+      "tier": "2 — Intermediate",
+      "equipment": "Box",
+      "cue": "Quarter squat, swing arms and jump — land softly with bent knees on the box, step down, never jump down.",
+      "rationale": "Develops explosive lower body power and rate of force development — teaches full hip extension in a jumping context.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "caution",
+        "Built Different": "avoid",
+        "OG": "avoid",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "avoid",
+        "Shoulder": "ok",
+        "Knee": "avoid",
+        "Foot / Ankle": "avoid",
+        "Hip Mobility": "caution",
+        "Thoracic": "ok"
+      },
+      "notes": "Knee and Elder contraindicated. Apex and Operator athletic day only."
+    },
+    {
+      "id": 60,
+      "name": "Broad Jump",
+      "pattern": "Power",
+      "slot": "Athletic",
+      "tier": "2 — Intermediate",
+      "equipment": "Bodyweight",
+      "cue": "Quarter squat and drive hips back, then explosively extend hips — land softly with bent knees and absorb through the legs.",
+      "rationale": "Horizontal power development — directly transfers to acceleration mechanics and first-step explosiveness for former athletes.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "caution",
+        "Built Different": "avoid",
+        "OG": "avoid",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "avoid",
+        "Shoulder": "ok",
+        "Knee": "avoid",
+        "Foot / Ankle": "avoid",
+        "Hip Mobility": "caution",
+        "Thoracic": "ok"
+      },
+      "notes": "Apex primary power exercise. Phantom athletic day."
+    },
+    {
+      "id": 61,
+      "name": "Trap Bar Jump",
+      "pattern": "Power",
+      "slot": "Athletic",
+      "tier": "3 — Advanced",
+      "equipment": "Trap Bar",
+      "cue": "Moderate load, quarter squat, then explosively drive up and leave the floor — land with soft knees.",
+      "rationale": "Loaded jump with trap bar — the safest way to develop power under load with minimal spinal stress.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "caution",
+        "Built Different": "avoid",
+        "OG": "avoid",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "avoid",
+        "Shoulder": "ok",
+        "Knee": "avoid",
+        "Foot / Ankle": "avoid",
+        "Hip Mobility": "caution",
+        "Thoracic": "ok"
+      },
+      "notes": "Apex primary power movement. Advanced athletes only."
+    },
+    {
+      "id": 62,
+      "name": "Medicine Ball Slam",
+      "pattern": "Power",
+      "slot": "F / Athletic",
+      "tier": "1 — Foundation",
+      "equipment": "Med Ball",
+      "cue": "Raise ball overhead, brace core, and slam into floor with full force — catch or pick up and repeat immediately.",
+      "rationale": "Total body power expression — trains force production from the ground up and provides a high-intensity finisher option for all fitness levels.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "caution",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "caution"
+      },
+      "notes": "Low back mod: reduce overhead reach. Shoulder mod: keep arms lower."
+    },
+    {
+      "id": 63,
+      "name": "Medicine Ball Rotational Throw",
+      "pattern": "Power",
+      "slot": "F / Athletic",
+      "tier": "2 — Intermediate",
+      "equipment": "Med Ball / Wall",
+      "cue": "Rotate from hips not spine — load into the back hip, then explosively rotate and throw into wall.",
+      "rationale": "Develops rotational power that transfers directly to athletic performance in all sport movements.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "caution",
+        "Built Different": "caution",
+        "OG": "avoid",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "caution",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "caution",
+        "Thoracic": "ok"
+      },
+      "notes": "Athletic programs primarily. Low back: limit range of motion."
+    },
+    {
+      "id": 64,
+      "name": "500 Meter Row",
+      "pattern": "Finisher",
+      "slot": "F",
+      "tier": "1 — Foundation",
+      "equipment": "Rower",
+      "cue": "Full drive through legs first then lean back and pull — maintain consistent stroke rate and output throughout.",
+      "rationale": "Full body cardiovascular demand with joint-friendly loading — the primary cardiorespiratory assessment tool and high-quality finisher for all programs.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Track time every session. Beat it next session."
+    },
+    {
+      "id": 65,
+      "name": "Row Intervals",
+      "pattern": "Finisher",
+      "slot": "F",
+      "tier": "1 — Foundation",
+      "equipment": "Rower",
+      "cue": "40 seconds max effort, 20 seconds complete rest — maintain consistent output across all intervals.",
+      "rationale": "High-output aerobic intervals with measurable progress — distance per interval tracked and beaten session to session.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Score = total distance. Beat it next session."
+    },
+    {
+      "id": 66,
+      "name": "Bike Intervals",
+      "pattern": "Finisher",
+      "slot": "F",
+      "tier": "1 — Foundation",
+      "equipment": "Assault / Stationary Bike",
+      "cue": "40 seconds max effort, 20 seconds rest — keep RPM consistent across all intervals.",
+      "rationale": "Zero impact cardiovascular conditioning — the best finisher option for knee and foot/ankle clients.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Best finisher for knee and ankle clients. Score = total calories."
+    },
+    {
+      "id": 67,
+      "name": "Sled Push",
+      "pattern": "Finisher",
+      "slot": "F",
+      "tier": "2 — Intermediate",
+      "equipment": "Sled",
+      "cue": "Low athletic position, drive through balls of feet — maintain constant pressure and do not stand upright.",
+      "rationale": "Maximum lower body metabolic demand with zero eccentric loading — cannot cause soreness, safe for all injury profiles, and brutally effective.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "caution",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Elder: light load. Knee: no knee flexion past 90. Score = distance."
+    },
+    {
+      "id": 68,
+      "name": "Farmer Carry Intervals",
+      "pattern": "Finisher",
+      "slot": "F",
+      "tier": "1 — Foundation",
+      "equipment": "DB / KB",
+      "cue": "Carry for 40 seconds at pace, set down and rest 20 seconds — maintain upright posture throughout.",
+      "rationale": "Grip, core, and postural endurance finisher — builds work capacity while reinforcing posture under fatigue.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "ok",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "ok",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Score = total distance. Accessible for all avatars."
+    },
+    {
+      "id": 69,
+      "name": "KB Complex",
+      "pattern": "Finisher",
+      "slot": "F",
+      "tier": "2 — Intermediate",
+      "equipment": "KB",
+      "cue": "Swing into clean into press into front squat — do not put the bell down until the prescribed reps are complete.",
+      "rationale": "Multi-movement KB complex that hits the entire body in minimal time — maximum metabolic demand in minimum time.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "caution",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "caution",
+        "Shoulder": "caution",
+        "Knee": "caution",
+        "Foot / Ankle": "caution",
+        "Hip Mobility": "caution",
+        "Thoracic": "caution"
+      },
+      "notes": "Intermediate and above only. Multiple flags: use row intervals instead."
+    },
+    {
+      "id": 70,
+      "name": "Battle Ropes",
+      "pattern": "Finisher",
+      "slot": "F",
+      "tier": "1 — Foundation",
+      "equipment": "Battle Ropes",
+      "cue": "Alternate arms with full extension — maintain athletic stance and breathe continuously.",
+      "rationale": "Upper body dominant metabolic finisher — zero lower body impact and excellent for clients with lower body restrictions.",
+      "avatars": {
+        "Comeback": "ok",
+        "Workhorse": "ok",
+        "Built Different": "ok",
+        "OG": "caution",
+        "Builder": "ok",
+        "Apex": "ok"
+      },
+      "injuries": {
+        "Low Back": "ok",
+        "Shoulder": "caution",
+        "Knee": "ok",
+        "Foot / Ankle": "ok",
+        "Hip Mobility": "ok",
+        "Thoracic": "ok"
+      },
+      "notes": "Score = work sets completed. Shoulder caution: keep arms lower."
+    }
+  ]
+};
+
+// ── Eligibility filters ──────────────────────────────────────────
+// Tier ceiling per avatar (BUILD #1 spec):
+//   Builder/OG/Comeback -> tier 1 only | Workhorse/Built Different -> 1-2 | Apex -> 1-3
+const AVATAR_TIER_MAX = { 'Builder':1, 'OG':1, 'Comeback':1, 'Workhorse':2, 'Built Different':2, 'Apex':3 };
+// Soft compound:isolation guidance per avatar (prompt text only).
+const AVATAR_COMPOUND_RATIO = { 'Builder':'90/10', 'Apex':'85/15', 'Comeback':'80/20', 'Workhorse':'75/25', 'OG':'70/30', 'Built Different':'60/40' };
+
+function exTier(e) { return parseInt(String(e.tier).trim().charAt(0), 10) || 1; }
+
+// Slot letters an exercise is eligible for. The slot field is messy
+// ("A", "A/B", "F / Athletic", "Athletic", "D / Warm-Up"): split on
+// "/" and keep only bare A-F letters. "Athletic" -> none (jumps have no
+// lettered slot); "A/B" -> both A and B; "F / Athletic" -> F.
+function slotLetters(e) {
+  return String(e.slot).split('/').map(function(s){ return s.trim(); }).filter(function(s){ return /^[A-F]$/.test(s); });
+}
+
+// Normalize client.flags to an array of injury-flag strings (verbatim,
+// including "Foot / Ankle"). Drops empties and the "None" sentinel.
+function clientFlags(c) {
+  if (Array.isArray(c.flags)) return c.flags.filter(function(f){ return f && f !== 'None'; });
+  if (c.flags && c.flags !== 'None') return String(c.flags).split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+  return [];
+}
+
+// getEligibleExercises(client): filter all 70 by avatar (drop "avoid"),
+// injury (drop where any client flag is "avoid"), and tier ceiling, then
+// group survivors by slot letter A-F. Returns {A:[...],B:[...],...,F:[...]}
+// of exercise objects.
+function getEligibleExercises(c) {
+  const avatar = c.avatar;
+  const flags = clientFlags(c);
+  const tierMax = (AVATAR_TIER_MAX[avatar] != null) ? AVATAR_TIER_MAX[avatar] : 3;
+  const groups = { A:[], B:[], C:[], D:[], E:[], F:[] };
+  const all = (MRS_EXERCISE_LIB && MRS_EXERCISE_LIB.exercises) || [];
+  all.forEach(function(e) {
+    if (e.avatars && e.avatars[avatar] === 'avoid') return;                 // AVATAR: keep ok/caution
+    if (flags.some(function(f){ return e.injuries && e.injuries[f] === 'avoid'; })) return; // INJURY: keep ok/caution
+    if (exTier(e) > tierMax) return;                                        // TIER by avatar
+    slotLetters(e).forEach(function(L){ if (groups[L]) groups[L].push(e); });
+  });
+  // Slot F must never be empty: if the avatar/tier filter emptied it,
+  // fall back to injury-only finishers (drop "avoid" for client's flags).
+  if (groups.F.length === 0) {
+    all.forEach(function(e) {
+      if (slotLetters(e).indexOf('F') === -1) return;
+      if (flags.some(function(f){ return e.injuries && e.injuries[f] === 'avoid'; })) return;
+      groups.F.push(e);
+    });
+  }
+  return groups;
+}
+
+// libraryBlock(client): render the per-slot candidate menu injected into
+// weekPrompt(). The model may ONLY choose from these verbatim names.
+function libraryBlock(c) {
+  const groups = getEligibleExercises(c);
+  const flags = clientFlags(c);
+  const label = { A:'SLOT A', B:'SLOT B', C:'SLOT C', D:'SLOT D', E:'SLOT E', F:'SLOT F (finisher)' };
+  const lines = ['EXERCISE LIBRARY — choose ONLY from these exact names. Do not invent exercises.'];
+  ['A','B','C','D','E','F'].forEach(function(L) {
+    const names = groups[L].map(function(e){ return e.name; });
+    if (names.length) lines.push(label[L] + ' — choose ONLY from: ' + names.join(', '));
+  });
+  lines.push('Use these exact names. Do not invent exercises. Rotate across weeks so a client does not repeat the same Slot A every session across 3–4 sessions.');
+  const ratio = AVATAR_COMPOUND_RATIO[c.avatar];
+  if (ratio) {
+    const parts = ratio.split('/');
+    lines.push('Movement mix (soft target, not a hard rule): ~' + parts[0] + '% compound / ~' + parts[1] + '% isolation.');
+  }
+  // Caution coaching notes: if the model picks any exercise that is
+  // "caution" for one of the client's flags, it must append that note.
+  const cautions = [];
+  const seen = {};
+  ['A','B','C','D','E','F'].forEach(function(L) {
+    groups[L].forEach(function(e) {
+      if (seen[e.name]) return;
+      const isCaution = flags.some(function(f){ return e.injuries && e.injuries[f] === 'caution'; });
+      if (isCaution && e.notes) { cautions.push('  ' + e.name + ' → ' + e.notes); seen[e.name] = true; }
+    });
+  });
+  if (cautions.length) {
+    lines.push('CAUTION — if you choose any of these, append its coaching note to the *cue* line:');
+    for (var i = 0; i < cautions.length; i++) lines.push(cautions[i]);
+  }
+  return lines.join('\n');
+}
+
 const avCtx = a => ({
   Comeback: "Former athlete or previously in shape. Movements feel athletic — trap bar DL, loaded carries, power in Wks 5–8. Voice: 'You had it before. We're bringing it back.'",
   Workhorse: "Hardworking, no real training system. Engineering language. Voice: 'You know how to work. Now the work has direction.'",
@@ -2049,6 +4066,7 @@ AVATAR: ${avCtx(c.avatar)}
 INJURIES: ${injRules(c.flags)}
 WARM-UP: ${warmupTxt(c.flags)}
 SESSIONS: ${sessions} | RPE: ${rpe}
+${libraryBlock(c)}
 FORMAT (use exactly):
 SESSION [N]
 Warm-Up [X min]: [exercises · sets/reps]
@@ -2064,7 +4082,7 @@ E | [Exercise] | [S]×[duration] | Rest [X]s
 *[One cue]*
 F — FINISHER | [Exercise] | 8 min | [Work:Rest]
 Track: [metric] → beat next session
-RULES: Rotate Slot A squat/hinge — never repeat same exercise in same week. No explanations. Program only.
+RULES: Every exercise must be copied verbatim from the EXERCISE LIBRARY above for its slot — never invent an exercise or use a name not listed. Rotate Slot A squat/hinge — never repeat same exercise in same week. No explanations. Program only.
 OUTPUT:
 ## WEEK ${w}${w===6?' — HALFWAY':w===8?' — PEAK':''}
 *Coach: ${note}*${halfway}
@@ -2410,7 +4428,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=25';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=26';
 }
 
 function exportClient(clientId) {
@@ -2418,7 +4436,7 @@ function exportClient(clientId) {
   var c = (database.clients || []).find(function(x){ return x.id === clientId; });
   if (!c) { toast("Client not found"); return; }
 
-  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=25";
+  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=26";
 
   var profileData = {
     id: c.id, name: c.name, age: c.age||"", gender: c.gender||"M",
@@ -2576,7 +4594,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=25',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=26',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -3711,7 +5729,7 @@ function printProgressReport(clientId) {
 
     // Footer with QR code
     +(function(){
-      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=25';
+      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=26';
       const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data='+encodeURIComponent(portalUrl)+'&bgcolor=0f0f0c&color=c9a227&format=png';
       return '<div class="footer-bar" style="display:flex;align-items:center;justify-content:space-between;gap:16px">'
         +'<div>'
