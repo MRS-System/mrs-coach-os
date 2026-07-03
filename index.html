@@ -3931,10 +3931,25 @@ function exTier(e) { return parseInt(String(e.tier).trim().charAt(0), 10) || 1; 
 
 // Slot letters an exercise is eligible for. The slot field is messy
 // ("A", "A/B", "F / Athletic", "Athletic", "D / Warm-Up"): split on
-// "/" and keep only bare A-F letters. "Athletic" -> none (jumps have no
-// lettered slot); "A/B" -> both A and B; "F / Athletic" -> F.
+// "/" and keep only bare A-F letters. "Athletic" -> none here (pure jumps
+// get routed by routedSlots); "A/B" -> both A and B; "F / Athletic" -> F.
 function slotLetters(e) {
   return String(e.slot).split('/').map(function(s){ return s.trim(); }).filter(function(s){ return /^[A-F]$/.test(s); });
+}
+
+// routedSlots(exercise, avatar): the slot letters this exercise is eligible
+// for, INCLUDING routing for pure-"Athletic" jumps that have no lettered
+// slot. Routing decides only WHICH slot; the avatar/injury/tier filters in
+// getEligibleExercises still gate WHO gets it.
+//   - loaded/explosive jump (e.g. Trap Bar Jump) -> SLOT A (any avatar)
+//   - bodyweight jump-squat plyo (Box/Broad Jump) -> SLOT F, APEX ONLY
+function routedSlots(e, avatar) {
+  const letters = slotLetters(e);
+  if (letters.length) return letters;
+  if (String(e.slot).trim() !== 'Athletic') return [];
+  const loaded = /trap bar|barbell|dumbbell|\bdb\b|kettlebell|\bkb\b|landmine|machine|sled|cable/i.test(e.equipment || '');
+  if (loaded) return ['A'];
+  return avatar === 'Apex' ? ['F'] : [];
 }
 
 // Normalize client.flags to an array of injury-flag strings (verbatim,
@@ -3959,7 +3974,7 @@ function getEligibleExercises(c) {
     if (e.avatars && e.avatars[avatar] === 'avoid') return;                 // AVATAR: keep ok/caution
     if (flags.some(function(f){ return e.injuries && e.injuries[f] === 'avoid'; })) return; // INJURY: keep ok/caution
     if (exTier(e) > tierMax) return;                                        // TIER by avatar
-    slotLetters(e).forEach(function(L){ if (groups[L]) groups[L].push(e); });
+    routedSlots(e, avatar).forEach(function(L){ if (groups[L]) groups[L].push(e); }); // SLOT (incl. jump routing)
   });
   // Slot F must never be empty: if the avatar/tier filter emptied it,
   // fall back to injury-only finishers (drop "avoid" for client's flags).
@@ -4428,7 +4443,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=26';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=27';
 }
 
 function exportClient(clientId) {
@@ -4436,7 +4451,7 @@ function exportClient(clientId) {
   var c = (database.clients || []).find(function(x){ return x.id === clientId; });
   if (!c) { toast("Client not found"); return; }
 
-  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=26";
+  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=27";
 
   var profileData = {
     id: c.id, name: c.name, age: c.age||"", gender: c.gender||"M",
@@ -4594,7 +4609,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=26',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=27',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5729,7 +5744,7 @@ function printProgressReport(clientId) {
 
     // Footer with QR code
     +(function(){
-      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=26';
+      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=27';
       const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data='+encodeURIComponent(portalUrl)+'&bgcolor=0f0f0c&color=c9a227&format=png';
       return '<div class="footer-bar" style="display:flex;align-items:center;justify-content:space-between;gap:16px">'
         +'<div>'
