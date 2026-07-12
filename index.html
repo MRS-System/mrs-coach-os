@@ -4067,10 +4067,63 @@ const avIntro = (a, name) => ({
   Apex: `${name}, now we're separating. Strength and power primary. Everything else follows.`
 })[a] || `${name} — 8 weeks. Built For The Moment™.`;
 
+// Justin's progression WAVE — volume then intensity. Universal SHAPE;
+// avatars differ only in starting load / rate (handled by avCtx + tier
+// gating). Block position within each 4-week block:
+//   1 = 3×10 baseline · 2 = 3×12 volume · 3 = 4×8 intensity spike ·
+//   4 = 4×10 front half, then TAPER into the retest.
+// Weeks 5–8 repeat the same shape at a higher baseline. Returns {pos,scheme,taper}.
+function waveFor(w) {
+  const pos = ((w - 1) % 4) + 1;
+  const scheme = { 1:'3×10', 2:'3×12', 3:'4×8', 4:'4×10' }[pos];
+  return { pos: pos, scheme: scheme, taper: (w === 4 || w === 8) };
+}
+
+// Effective RPE band with the avatar ceiling enforced OVER the week band.
+// OG never exceeds 7 (avCtx says "RPE max 7"); Comeback capped at 6 through
+// week 2; everyone else follows the week-based progression (~6 → 7 → 7–8).
+function rpeFor(avatar, w) {
+  const band = w <= 2 ? '6' : w <= 4 ? '7' : w <= 6 ? '7–8' : '8–9';
+  if (avatar === 'OG') return w <= 2 ? '6' : '7';
+  if (avatar === 'Comeback' && w <= 2) return '6';
+  return band;
+}
+
+// The explicit sets/reps/RPE prescription injected per week so the model
+// applies Justin's wave instead of improvising rep schemes.
+function prescriptionBlock(c, w) {
+  const wave = waveFor(w);
+  const rpe = rpeFor(c.avatar, w);
+  const block2 = w >= 5;
+  const retestDay = w === 4 ? '30' : '56';
+  const L = [];
+  L.push('PRESCRIPTION (Justin’s wave — volume then intensity; do NOT improvise rep schemes):');
+  L.push('RPE CEILING this week: ' + rpe + ' — never exceed it on any slot or any set, regardless of the week.');
+  if (wave.taper) {
+    L.push('Working slots A–D: open the week at ' + wave.scheme + (block2 ? ' at the Block-2 (higher) baseline load' : '') + ' for the first session(s), then TAPER.');
+    L.push('TAPER — in the final session(s) of this week (into the Day-' + retestDay + ' retest): cut working-set volume 40–50% (e.g. ' + wave.scheme + ' → 2×8) and drop load ~10–15%. ' + c.name + ' must reach the retest recovered and primed — do NOT add load or push intensity into the retest.');
+  } else {
+    const why = { 1:'baseline — learn the movements, clean controlled reps, log every load', 2:'add volume — same load as last week or a touch heavier', 3:'intensity spike — drop reps, add a set and add load, heavier than last week' }[wave.pos];
+    L.push('Working slots A–D: ' + wave.scheme + ' — ' + why + (block2 ? ' (Block-2 baseline: heavier than the matching Block-1 week)' : '') + '.');
+  }
+  L.push('Slot E (core): 2–3 sets, quality reps/time. Slot F (finisher): keep the 8-min work:rest format — push output.');
+  return L.join('\n');
+}
+
+// Short coach line that states the actual wave for the week.
+function coachNote(c, w) {
+  const wave = waveFor(w);
+  const rpe = rpeFor(c.avatar, w);
+  if (wave.taper) {
+    return 'Week ' + w + ' — ' + wave.scheme + ' to open, then TAPER the final session(s) (lighter, less volume) into the Day-' + (w === 4 ? '30' : '56') + ' retest. RPE ≤ ' + rpe + '. Come in fresh, not fried.';
+  }
+  const tag = { 1:'baseline, own the movements', 2:'add volume, same or slightly heavier', 3:'intensity spike — fewer reps, more load' }[wave.pos];
+  return 'Week ' + w + ' — ' + wave.scheme + ', ' + tag + '. RPE ≤ ' + rpe + '.' + (w >= 5 ? ' Block 2: higher baseline than weeks 1–4.' : '');
+}
+
 function weekPrompt(c, w) {
   const flagStr = Array.isArray(c.flags) ? (c.flags.length > 0 ? c.flags.join(', ') : 'None') : (c.flags || 'None');
-  const rpe = w <= 2 ? '6' : w <= 4 ? '7' : w <= 6 ? '7–8' : '8–9';
-  const note = {1:'Baseline. Log all loads. RPE cap 6.',2:'Add 1 set Slot A if Wk1 form clean. Same load.',3:'+5% load Slot A+B. RPE 7.',4:'Final +5%. Reassessment after last session.',5:'New exercises. RPE 7–8.',6:'Load increase. Halfway — pull measurements, show data.',7:'Push output on every finisher.',8:'Peak week. Max load. Graduation after last session.'}[w];
+  const rpe = rpeFor(c.avatar, w);
   const sessions = c.freq === '2x/week' ? 2 : c.freq === '3x/week' ? 3 : 4;
   const reassess = w === 4 ? `\n### REASSESSMENT\nScreen 1 — Overhead Squat (5 BW): pass if heels flat, depth parallel\nScreen 2 — Hip Hinge Dowel (5): pass if 3 contact points, hips back\nScreen 3 — Reverse Lunge (5/side): pass if knee tracks, torso upright\nFull Pass → Wks 5–8 | Partial → repeat Wks 3–4 | No Pass → reset` : '';
   const grad = w === 8 ? `\n### GRADUATION\nCompare to Wk1: weight · waist · hips · arms · push-up max · 500m row · plank\n**"[One sentence — what ${c.name} proved and what comes next]"**\nNext block: [which input to change and why]` : '';
@@ -4082,6 +4135,7 @@ INJURIES: ${injRules(c.flags)}
 WARM-UP: ${warmupTxt(c.flags)}
 SESSIONS: ${sessions} | RPE: ${rpe}
 ${libraryBlock(c)}
+${prescriptionBlock(c, w)}
 FORMAT (use exactly):
 SESSION [N]
 Warm-Up [X min]: [exercises · sets/reps]
@@ -4097,10 +4151,10 @@ E | [Exercise] | [S]×[duration] | Rest [X]s
 *[One cue]*
 F — FINISHER | [Exercise] | 8 min | [Work:Rest]
 Track: [metric] → beat next session
-RULES: Every exercise must be copied verbatim from the EXERCISE LIBRARY above for its slot — never invent an exercise or use a name not listed. Rotate Slot A squat/hinge — never repeat same exercise in same week. No explanations. Program only.
+RULES: Every exercise must be copied verbatim from the EXERCISE LIBRARY above for its slot — never invent an exercise or use a name not listed. Apply the PRESCRIPTION sets×reps to working slots A–D exactly as given — do not invent your own rep schemes; in a taper week the final session(s) use the reduced taper volume/load. Never exceed the RPE ceiling on any slot. Rotate Slot A squat/hinge — never repeat same exercise in same week. No explanations. Program only.
 OUTPUT:
 ## WEEK ${w}${w===6?' — HALFWAY':w===8?' — PEAK':''}
-*Coach: ${note}*${halfway}
+*Coach: ${coachNote(c, w)}*${halfway}
 [All ${sessions} sessions]${reassess}${grad}`;
 }
 
@@ -4443,7 +4497,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=27';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=28';
 }
 
 function exportClient(clientId) {
@@ -4451,7 +4505,7 @@ function exportClient(clientId) {
   var c = (database.clients || []).find(function(x){ return x.id === clientId; });
   if (!c) { toast("Client not found"); return; }
 
-  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=27";
+  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=28";
 
   var profileData = {
     id: c.id, name: c.name, age: c.age||"", gender: c.gender||"M",
@@ -4609,7 +4663,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=27',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=28',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5744,7 +5798,7 @@ function printProgressReport(clientId) {
 
     // Footer with QR code
     +(function(){
-      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=27';
+      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=28';
       const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data='+encodeURIComponent(portalUrl)+'&bgcolor=0f0f0c&color=c9a227&format=png';
       return '<div class="footer-bar" style="display:flex;align-items:center;justify-content:space-between;gap:16px">'
         +'<div>'
