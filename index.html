@@ -4038,7 +4038,15 @@ function libraryBlock(c) {
     const names = groups[L].map(function(e){ return e.name; });
     if (names.length) lines.push(label[L] + ' — choose ONLY from: ' + names.join(', '));
   });
-  lines.push('Use these exact names. Do not invent exercises. Rotate across weeks so a client does not repeat the same Slot A every session across 3–4 sessions.');
+  if (AVATAR_TIER_MAX[c.avatar] === 1) {
+    // Fix #7: tier-1 (foundation) avatars have a small Slot-A pool by design.
+    // Grooving the primary squat/hinge pattern IS the training goal, so allow
+    // repeats — forcing 4 distinct Slot-A moves from a pool of 3 would be
+    // unsatisfiable and push the model to invent/violate the library.
+    lines.push('Use these exact names. Do not invent exercises. This is a FOUNDATION avatar: Slot A MAY repeat across the week — grooving the primary squat/hinge pattern is the goal; do NOT force variety or invent a movement to avoid a repeat.');
+  } else {
+    lines.push('Use these exact names. Do not invent exercises. Rotate across weeks so a client does not repeat the same Slot A every session across 3–4 sessions.');
+  }
   const ratio = AVATAR_COMPOUND_RATIO[c.avatar];
   if (ratio) {
     const parts = ratio.split('/');
@@ -4190,7 +4198,7 @@ E | [Exercise] | [S]×[duration] | Rest [X]s
 *[One cue]*
 F — FINISHER | [Exercise] | 8 min | [Work:Rest]
 Track: [metric] → beat next session
-RULES: Every exercise must be copied verbatim from the EXERCISE LIBRARY above for its slot — never invent an exercise or use a name not listed. Apply the PRESCRIPTION sets×reps to working slots A–D exactly as given — do not invent your own rep schemes; in a taper week the final session(s) use the reduced taper volume/load. Never exceed the RPE ceiling on any slot. Rotate Slot A squat/hinge — never repeat same exercise in same week. No explanations. Program only.
+RULES: Every exercise must be copied verbatim from the EXERCISE LIBRARY above for its slot — never invent an exercise or use a name not listed. Apply the PRESCRIPTION sets×reps to working slots A–D exactly as given — do not invent your own rep schemes; in a taper week the final session(s) use the reduced taper volume/load. Never exceed the RPE ceiling on any slot. ${AVATAR_TIER_MAX[c.avatar]===1 ? 'Slot A MAY repeat across the week — grooving the foundational squat/hinge pattern is the goal; do not force variety or invent a movement to avoid a repeat.' : 'Rotate Slot A squat/hinge — never repeat the same exercise in the same week.'} No explanations. Program only.
 OUTPUT:
 ## WEEK ${w}${w===6?' — HALFWAY':w===8?' — PEAK':''}
 *Coach: ${coachNote(c, w)}*${halfway}
