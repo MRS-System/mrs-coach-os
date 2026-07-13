@@ -840,6 +840,7 @@ function mergeClientWeek(data) {
     workoutLogs: data.workoutLogs || [],
     slotLogs: data.slotLogs || {},
     mealScans: data.mealScans || {},
+    barcodeScans: data.barcodeScans || {}, // Fix #5: carry packaged-food (barcode) items to the coach
     avgNutriScore: data.avgNutriScore || null,
   });
   c.lastSeen = Date.now();
@@ -4849,6 +4850,49 @@ function renderCoachMealHistory(mealScans, idBase) {
   }).join('');
 }
 
+// Packaged-food (barcode) items the client logged — macro-only, no score (Fix #5).
+// Mirrors renderCoachMealHistory's collapsible day rows; returns '' when empty so
+// the caller can hide the whole section. Read-only. Reuses toggleCoachMealDay.
+function renderCoachBarcodeHistory(barcodeScans, idBase) {
+  const scans = barcodeScans || {};
+  const dayKeys = Object.keys(scans)
+    .filter(function(k){ const m = scans[k]; return Array.isArray(m) && m.length; })
+    .sort().reverse();
+  if (!dayKeys.length) return '';
+  return dayKeys.map(function(dk){
+    const items = scans[dk];
+    const dayId = idBase + '-bc-' + dk;
+    const dn = new Date(dk + 'T00:00').toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'});
+    const totCal = items.reduce(function(s,it){ return s + ((it.macros && it.macros.calories) || 0); }, 0);
+    const rows = items.map(function(it){
+      const time = it.ts ? new Date(it.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+      const macros = it.macros || {};
+      const macroLine = [
+        macros.protein != null ? macros.protein + 'g P' : '',
+        macros.carbs != null ? macros.carbs + 'g C' : '',
+        macros.fat != null ? macros.fat + 'g F' : '',
+        macros.calories != null ? macros.calories + ' cal' : ''
+      ].filter(Boolean).join(' · ');
+      const label = (it.name || 'Packaged Food') + (it.brand ? ' · ' + it.brand : '');
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border)">'
+        + '<div style="width:46px;height:46px;border-radius:8px;flex-shrink:0;background:var(--black-4);border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--dim);font-size:8px;gap:1px"><span style="font-size:14px">🏷️</span><span>Barcode</span></div>'
+        + '<div style="flex:1;min-width:0">'
+        + '<div style="font-size:11px;color:var(--white);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + label + '</div>'
+        + '<div style="font-size:9px;color:var(--dim);margin-top:1px">' + (time ? time + ' · ' : '') + (macroLine || 'macros n/a') + '</div>'
+        + '</div></div>';
+    }).join('');
+    return '<div style="border-top:1px solid var(--border)">'
+      + '<div onclick="toggleCoachMealDay(\'' + dayId + '\')" style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer">'
+      + '<span id="' + dayId + '-caret" style="color:var(--dim);font-size:10px;flex-shrink:0">▸</span>'
+      + '<span style="font-size:11px;color:var(--dim-2);flex:1">' + dn + '</span>'
+      + '<span style="font-size:10px;color:var(--dim)">' + items.length + ' item' + (items.length!==1?'s':'') + '</span>'
+      + '<span style="font-family:Bebas Neue,sans-serif;font-size:13px;color:var(--dim-2);margin-left:6px">' + totCal + '<span style="font-size:9px;color:var(--dim)"> cal</span></span>'
+      + '</div>'
+      + '<div id="' + dayId + '-detail" style="display:none;padding:0 0 6px 16px">' + rows + '</div>'
+      + '</div>';
+  }).join('');
+}
+
 // Pure client-side expand/collapse of one day's meals — no storage write.
 function toggleCoachMealDay(dayId) {
   const detail = document.getElementById(dayId + '-detail');
@@ -4880,6 +4924,7 @@ function buildCheckinsPanel(c) {
 
     const scans = w.mealScans || {};
     const mealsHtml = renderCoachMealHistory(scans, rowId);
+    const barcodeHtml = renderCoachBarcodeHistory(w.barcodeScans || {}, rowId); // Fix #5
 
     const sb = w.scoreBreakdown || {};
     const chips = [['P',sb.protein],['W',sb.water],['Wk',sb.workoutScore],['E',sb.energyScore],['Sl',sb.sleepScore],['St',sb.stressScore],['N',sb.nutritionScore]]
@@ -4891,6 +4936,7 @@ function buildCheckinsPanel(c) {
       ${sessionsHtml}
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:8px 0 3px">Meals${w.avgNutriScore != null ? ' · avg ' + w.avgNutriScore + '/10' : ''}</div>
       <div>${mealsHtml}</div>
+      ${barcodeHtml ? `<div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:8px 0 3px">Packaged Foods · Barcode</div><div>${barcodeHtml}</div>` : ''}
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:8px 0 3px">Breakdown</div>
       <div>${chips || '<span style="font-size:11px;color:var(--dim);font-style:italic">No breakdown</span>'}</div>`;
 
