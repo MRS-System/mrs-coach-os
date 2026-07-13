@@ -5938,18 +5938,15 @@ function printProgressReport(clientId) {
     +'<div class="quote-attr">\u2014 MRS\u2122 \u00b7 '+c.avatar+' \u00b7 Built For The Moment\u2122</div>'
     +'</div>'
 
-    // Footer with QR code
+    // Footer (Fix #6: QR + "Scan to open your Portal" caption removed \u2014 a
+    // graduating client shouldn't be sent back into their logging portal; a
+    // proper win-card with a QR comes post-freeze. This also drops the
+    // api.qrserver.com live-network image so the report prints clean offline.)
     +(function(){
-      const portalUrl = 'https://mrs-system.github.io/mrs-coach-os/portal.html?client='+c.id+'&v=29';
-      const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data='+encodeURIComponent(portalUrl)+'&bgcolor=0f0f0c&color=c9a227&format=png';
-      return '<div class="footer-bar" style="display:flex;align-items:center;justify-content:space-between;gap:16px">'
+      return '<div class="footer-bar">'
         +'<div>'
         +'<div class="footer-brand"><em>MRS\u2122</em> \u00b7 Metabolic Rebuild System\u2122 \u00b7 Built For The Moment\u2122 \u00b7 Justin Holmes \u00b7 Coach Use Only</div>'
         +'<div class="footer-brand" style="margin-top:3px">Generated '+new Date().toLocaleDateString()+'</div>'
-        +'<div style="font-size:8px;color:rgba(242,240,232,0.4);margin-top:4px;font-family:Barlow Condensed,sans-serif;letter-spacing:.08em;text-transform:uppercase">Scan to open your MRS\u2122 Portal</div>'
-        +'</div>'
-        +'<div style="flex-shrink:0;text-align:center">'
-        +'<img src="'+qrUrl+'" width="72" height="72" style="border-radius:6px;border:1px solid rgba(201,162,39,0.3);display:block" alt="Portal QR"/>'
         +'</div>'
         +'</div>';
     })()
