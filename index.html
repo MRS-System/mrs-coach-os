@@ -5785,7 +5785,7 @@ function printProgressReport(clientId) {
         +'<div style="display:flex;align-items:center;gap:16px;margin-bottom:24px">'
         +'<div style="font-family:Bebas Neue,sans-serif;font-size:42px;color:'+(compliancePct>=80?'#1a7a4a':compliancePct>=60?'#c9a227':'#dc2626')+';line-height:1">'+compliancePct+'%</div>'
         +'<div><div style="font-size:13px;font-weight:600;color:#1a1a1a">'+doneSess+' of '+totalSess+' sessions completed</div>'
-        +'<div style="font-size:11px;color:#888">'+compliance.length+' week'+(compliance.length!==1?'s':'')+' tracked</div>'
+        +'<div style="font-size:11px;color:#888">'+cw.length+' week'+(cw.length!==1?'s':'')+' tracked</div>'
         +'<div class="compliance-bar" style="width:200px;margin-top:6px"><div class="compliance-fill" style="width:'+compliancePct+'%;background:'+(compliancePct>=80?'#1a7a4a':compliancePct>=60?'#c9a227':'#dc2626')+'"></div></div>'
         +'</div></div>'
       : '')
