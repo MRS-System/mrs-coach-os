@@ -3298,6 +3298,7 @@ function saveSlotLog(sessionId, slotKey, el) {
   if (weight || reps || rpe || sets) {
     pdb.slotChecks[sessionId][slotKey + '_log'] = {weight, reps, unit, rpe, sets, ts: Date.now()};
     savePortalDb(pdb);
+    deliverCurrentWeek(); // Fix #2: push the in-progress week to the coach now
   }
 }
 
@@ -3354,6 +3355,7 @@ function saveFinisherLog(sessionId, slotKey) {
   if (!pdb.slotChecks[sessionId]) pdb.slotChecks[sessionId] = {};
   pdb.slotChecks[sessionId][slotKey + '_log'] = {rpe, note, ts: Date.now()};
   savePortalDb(pdb);
+  deliverCurrentWeek(); // Fix #2: push the in-progress week to the coach now
 }
 
 // Post-render DOM pass (mirrors renderCorrectiveBlock): renderProgram is
@@ -3514,6 +3516,7 @@ function markSessionDone(sessionId) {
   if (btn) { btn.textContent = '✓ Session Logged'; btn.style.background = 'var(--green)'; btn.style.color = 'var(--black)'; }
   updateWeekCompletionVisuals();
   showToast('Session logged!');
+  deliverCurrentWeek(); // Fix #2: push the in-progress week to the coach now
 }
 
 // Build the weekly check-in payload (compliance scores, workout logs, RPE,
@@ -3673,6 +3676,91 @@ async function autoSendUnsentWeeks() {
   renderSendGate(detectUnsentWeeks());
 }
 
+// ── Live current-week delivery (Fix #2) ──────────────────────────────
+// autoSendUnsentWeeks + the manual button only ever move PRIOR weeks; the
+// in-progress week (offset 0) never left the phone until the FOLLOWING week's
+// open — so every "Session logged ✓" toast implied the coach had the data when
+// nothing had been sent. Worst case: a client finishes their final week, never
+// reopens, and the whole week is lost. These non-protected siblings deliver the
+// CURRENT week as it is logged (debounced), flush on background/close for the
+// protected writers that can't call in directly (Today-tab log, wellness/check
+// items), and show an HONEST sync state distinct from the local "logged" toast.
+// sendWeekForOffset(0) reuses the existing awaited POST and never stamps
+// sentWeeks for offset 0, so the growing week re-sends cleanly (the coach merge
+// is idempotent per weekKey → the last, fullest copy wins).
+let _syncTimer = null;
+const INBOX_URL = 'https://mrs-nutrireader-worker.mrs-system.workers.dev/inbox';
+
+function _weekHasContent(p) {
+  if (!p) return false;
+  if (p.slotLogs && Object.keys(p.slotLogs).length) return true;
+  if (p.workoutLogs && p.workoutLogs.length) return true;
+  if (p.mealScans && Object.keys(p.mealScans).length) return true;
+  if (p.barcodeScans && Object.keys(p.barcodeScans).length) return true;
+  if (p.checkins && Object.values(p.checkins).some(v => v)) return true;
+  return false;
+}
+
+// Honest sync chip — fixed, non-blocking, reflects the TRUE delivery state of
+// the current week (separate from the per-action "logged" toast).
+function renderSyncStatus(state) {
+  let chip = document.getElementById('syncChip');
+  if (!chip) {
+    chip = document.createElement('div');
+    chip.id = 'syncChip';
+    chip.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:500;pointer-events:none;'
+      + "font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:.03em;"
+      + 'padding:6px 12px;border-radius:20px;opacity:0;transition:opacity .3s;max-width:78vw;'
+      + 'box-shadow:0 2px 10px rgba(0,0,0,.35)';
+    document.body.appendChild(chip);
+  }
+  const map = {
+    syncing: { t: '⟳ Sending to coach…',            bg: 'rgba(60,60,54,.96)',  hold: true },
+    synced:  { t: '✓ Coach has your latest',             bg: 'rgba(26,122,74,.96)', hold: false },
+    failed:  { t: '⚠ Saved on phone — not sent yet', bg: 'rgba(176,58,46,.96)', hold: true },
+    idle:    { t: '', bg: 'transparent', hold: false },
+  };
+  const s = map[state] || map.idle;
+  if (chip._hideT) { clearTimeout(chip._hideT); chip._hideT = null; }
+  if (!s.t) { chip.style.opacity = '0'; return; }
+  chip.textContent = s.t;
+  chip.style.background = s.bg;
+  chip.style.color = '#f2f0e8';
+  chip.style.opacity = '1';
+  if (!s.hold) chip._hideT = setTimeout(() => { chip.style.opacity = '0'; }, 2600);
+}
+
+// Debounced delivery of the in-progress week. Safe to call after any local save.
+function deliverCurrentWeek() {
+  if (!client || !clientId) return;
+  renderSyncStatus('syncing');
+  if (_syncTimer) clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(async () => {
+    _syncTimer = null;
+    if (!_weekHasContent(buildWeeklyPayload(0))) { renderSyncStatus('idle'); return; }
+    const ok = await sendWeekForOffset(0);
+    renderSyncStatus(ok ? 'synced' : 'failed');
+  }, 900);
+}
+
+// Best-effort flush when the app is backgrounded/closed — the only way to catch
+// the PROTECTED writers (saveWorkoutLog, saveCheckItem, autoSaveWellness) which
+// cannot call deliverCurrentWeek. sendBeacon survives page teardown.
+function flushCurrentWeekBeacon() {
+  try {
+    if (!client || !clientId) return;
+    const payload = buildWeeklyPayload(0);
+    if (!payload.clientId || !_weekHasContent(payload)) return;
+    if (_syncTimer) { clearTimeout(_syncTimer); _syncTimer = null; }
+    const body = JSON.stringify({ clientId: payload.clientId, payload });
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(INBOX_URL, new Blob([body], { type: 'application/json' }));
+    } else {
+      fetch(INBOX_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true });
+    }
+  } catch (e) {}
+}
+
 function init() {
   clientId = getClientId();
 
@@ -3747,6 +3835,17 @@ window.addEventListener('load', renderUnloggedPastSessionNudge);
 // week (sends under its correct weekKey), gates forward use if a send can't
 // complete. Same post-init load hook pattern as above.
 window.addEventListener('load', autoSendUnsentWeeks);
+// Live current-week delivery (Fix #2): flush the in-progress week when the app is
+// backgrounded/closed — the only hook that catches the protected writers
+// (Today-tab log, wellness/check items) — and attempt a delivery on open so an
+// offline-logged week syncs on reconnect. Same post-init load-hook pattern.
+window.addEventListener('load', function () {
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') flushCurrentWeekBeacon();
+  });
+  window.addEventListener('pagehide', flushCurrentWeekBeacon);
+  deliverCurrentWeek();
+});
 // Barcode day-log overlay (packaged-food lane). Runs AFTER init's renderNRDailyLog
 // (registered later = fires later), overlaying the unified list when the day has
 // barcode items. Same post-init load-hook sibling pattern as above; init untouched.
