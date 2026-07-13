@@ -1570,10 +1570,15 @@ function saveNewClient() {
 let currentClientId = '';
 let genT1 = '', genT2 = '', genEditingProgramId = null;
 let genBlock = 0; // 0=none, 1=block1, 2=block2
+// Fix #3: resumable generation + auto-save state. genB1Done/genB2Done = weeks of
+// each block already built (so a retry never re-bills them); genAutoProgId = the
+// program record auto-saved this session; genFailedBlock = which block to resume.
+let genB1Done = 0, genB2Done = 0, genAutoProgId = null, genFailedBlock = 0;
 
 function renderProfile(clientId) {
   currentClientId = clientId;
   genT1 = ''; genT2 = ''; genBlock = 0;
+  genB1Done = 0; genB2Done = 0; genAutoProgId = null; genFailedBlock = 0;
   const data = db();
   const c = data.clients.find(x => x.id === clientId);
   if (!c) { nav('clients'); return; }
@@ -1741,6 +1746,11 @@ function renderProfile(clientId) {
         <button class="btn" onclick="printProg()">Program PDF</button>
         <button class="btn" onclick="printProgressReport()">📊 Progress Report</button>
       </div>
+      <div id="genRecovery" class="btn-row" style="display:none;margin-top:.75rem">
+        <button class="btn gold" onclick="retryGen()">↻ Retry — continue building</button>
+        <button class="btn" onclick="saveProgramToClient()">Save built weeks</button>
+        <button class="btn" onclick="cancelGen()">Discard</button>
+      </div>
       <div id="genStart" class="btn-row">
         <button class="btn gold full" onclick="buildBlock1()">BUILD 8-WEEK PROGRAM →</button>
       </div>
@@ -1775,7 +1785,8 @@ function renderProfile(clientId) {
           </div>
           <div class="phi-right">
             ${!isActive?`<button onclick="setActiveProgram('${p.id}','${c.id}')" class="btn sm" style="font-size:9px">Set Active</button>`:''}
-            ${p.block1Only?`<button onclick="continueToBlock2('${p.id}','${c.id}')" class="btn sm gold" style="font-size:9px">+ Add Weeks 5–8</button>`:''}
+            ${p.block1Only && !p.partial?`<button onclick="continueToBlock2('${p.id}','${c.id}')" class="btn sm gold" style="font-size:9px">+ Add Weeks 5–8</button>`:''}
+            ${p.partial?`<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--red)">⚠ Incomplete</span>`:''}
             <button onclick="viewSavedProgram('${p.id}','${c.id}')" class="btn sm" style="font-size:10px">View</button>
             <button onclick="deleteProgram('${p.id}','${c.id}')" class="btn sm red" style="font-size:10px">Delete</button>
           </div>
@@ -4250,7 +4261,9 @@ async function buildBlock1() {
   const c = getClient();
   if (!c) return;
   genT1 = ''; genT2 = ''; genBlock = 1; genEditingProgramId = null;
+  genB1Done = 0; genB2Done = 0; genAutoProgId = null; genFailedBlock = 0;
   showGenUI();
+  hideGenRecovery();
 
   // Build week pills
   const wks = c.freq === '2x/week' ? [1,2,3,4] : [1,2,3,4];
@@ -4260,25 +4273,39 @@ async function buildBlock1() {
   document.getElementById('genText').innerHTML = rmd(header);
   genT1 = header;
 
+  await resumeBlock1(c);
+}
+
+// Resumable block-1 loop (Fix #3): builds weeks genB1Done+1..4, so a retry after
+// a mid-loop failure never re-bills the weeks already built. Auto-saves the
+// completed foundation so it survives navigation with no explicit Save click.
+async function resumeBlock1(c) {
+  c = c || getClient();
+  if (!c) return;
+  genBlock = 1;
+  genFailedBlock = 0;
+  hideGenRecovery();
+  document.getElementById('genStart').style.display = 'none';
+  const badge = document.getElementById('genStatusBadge');
+  badge.style.display = 'block'; badge.style.color = 'var(--gold)';
   try {
     // Sequential: one week at a time to respect concurrent request limits
-    for (let w = 1; w <= 4; w++) {
-      document.getElementById('genStatusBadge').textContent = 'BUILDING WEEK ' + w + ' OF 4...';
-      document.getElementById('gwp' + w).classList.add('building');
+    for (let w = genB1Done + 1; w <= 4; w++) {
+      badge.textContent = 'BUILDING WEEK ' + w + ' OF 4...';
+      const pill = document.getElementById('gwp' + w); if (pill) pill.classList.add('building');
       const text = await apiCall(weekPrompt(c, w));
       genT1 += '\n' + text;
-      document.getElementById('gwp' + w).classList.remove('building');
-      document.getElementById('gwp' + w).classList.add('done');
+      genB1Done = w;
+      if (pill) { pill.classList.remove('building'); pill.classList.add('done'); }
       document.getElementById('genText').innerHTML = rmd(genT1);
       document.getElementById('genOutput').scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
+    autosaveProgram(); // auto-save completed 4-week foundation (block1Only)
+    badge.style.display = 'none';
     document.getElementById('genConfirmGate').style.display = 'block';
     document.getElementById('genActions').style.display = 'flex';
-
   } catch(e) {
-    document.getElementById('genStatusBadge').textContent = 'ERROR — ' + e.message;
-    document.getElementById('genStatusBadge').style.color = 'var(--red)';
-    document.getElementById('genStart').style.display = 'block';
+    showGenError(e, genB1Done, 4, 1);
   }
 }
 
@@ -4286,7 +4313,10 @@ async function buildBlock2() {
   const c = getClient();
   if (!c) return;
   genBlock = 2;
+  genB2Done = 0;
+  genFailedBlock = 0;
   document.getElementById('genConfirmGate').style.display = 'none';
+  hideGenRecovery();
 
   // Reset week 5-8 pills to ready state
   [5,6,7,8].forEach(w => {
@@ -4294,50 +4324,121 @@ async function buildBlock2() {
     if (el) { el.style.opacity = '1'; el.classList.remove('building','done'); }
   });
 
-  const block2header = `\n\n---\n# WEEKS 5–8 — THE BUILD\n`;
-  genT2 = block2header;
+  genT2 = `\n\n---\n# WEEKS 5–8 — THE BUILD\n`;
+  await resumeBlock2(c);
+}
 
+// Resumable block-2 loop (Fix #3): builds weeks 5..8 from where a prior attempt
+// left off (genB2Done = how many of 5–8 are done), auto-saves the full 8-week
+// program on completion (updating the same record block 1 auto-saved, or the
+// program being extended), and on failure preserves the built weeks and offers
+// Retry / Save / Cancel instead of a dead-end error badge.
+async function resumeBlock2(c) {
+  c = c || getClient();
+  if (!c) return;
+  genBlock = 2;
+  genFailedBlock = 0;
+  hideGenRecovery();
+  const badge = document.getElementById('genStatusBadge');
+  badge.style.display = 'block'; badge.style.color = 'var(--gold)';
   try {
-    // Sequential: one week at a time
+    // Sequential: one week at a time; skip weeks already built on a prior attempt
     for (let w = 5; w <= 8; w++) {
-      document.getElementById('genStatusBadge').style.display = 'block';
-      document.getElementById('genStatusBadge').textContent = 'BUILDING WEEK ' + w + ' OF 8...';
-      document.getElementById('genStatusBadge').style.color = 'var(--gold)';
+      if ((w - 4) <= genB2Done) continue;
+      badge.textContent = 'BUILDING WEEK ' + w + ' OF 8...';
       const el = document.getElementById('gwp' + w);
       if (el) el.classList.add('building');
       const text = await apiCall(weekPrompt(c, w));
       genT2 += '\n' + text;
+      genB2Done = w - 4;
       if (el) { el.classList.remove('building'); el.classList.add('done'); }
       document.getElementById('genText').innerHTML = rmd(genT1 + genT2);
       document.getElementById('genOutput').scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
-
-    // Persist newly-built weeks 5–8 onto the program being extended (Add Weeks 5–8 flow)
-    if (genEditingProgramId) {
-      const data = db();
-      const cc = data.clients.find(x => x.id === currentClientId);
-      const pp = cc && (cc.programs || []).find(x => x.id === genEditingProgramId);
-      if (pp) { pp.block1 = genT1; pp.block2 = genT2; pp.block1Only = false; cc.activeProgramId = pp.id; saveDb(data); }
-    }
-
-    document.getElementById('genStatusBadge').style.display = 'none';
+    autosaveProgram(); // auto-save the full 8-week program
+    badge.style.display = 'none';
     document.getElementById('b2badge') && (document.getElementById('b2badge').textContent = '⚡ 8-Week Program Complete');
     document.getElementById('genActions').style.display = 'flex';
-    toast('8-week program complete ✓');
-
+    toast('8-week program complete ✓ (auto-saved)');
   } catch(e) {
-    document.getElementById('genStatusBadge').textContent = 'ERROR — ' + e.message;
-    document.getElementById('genStatusBadge').style.color = 'var(--red)';
+    showGenError(e, 4 + genB2Done, 8, 2);
   }
 }
 
 function cancelGen() {
   genT1 = ''; genT2 = ''; genBlock = 0;
+  genB1Done = 0; genB2Done = 0; genAutoProgId = null; genFailedBlock = 0;
   document.getElementById('genStart').style.display = 'block';
   document.getElementById('genWeekPills').style.display = 'none';
   document.getElementById('genOutput').style.display = 'none';
   document.getElementById('genConfirmGate').style.display = 'none';
   document.getElementById('genActions').style.display = 'none';
+  hideGenRecovery();
+}
+
+// Fix #3 recovery helpers ─────────────────────────────────────────────
+// On a mid-loop generation failure, keep every built week in memory, show an
+// informative status, and surface Retry / Save / Cancel (no more dead-end badge).
+function showGenError(e, done, total, block) {
+  genFailedBlock = block;
+  const badge = document.getElementById('genStatusBadge');
+  if (badge) {
+    badge.style.display = 'block';
+    badge.style.color = 'var(--red)';
+    badge.textContent = 'WEEK ' + (done + 1) + ' FAILED (' + ((e && e.message) ? e.message : 'error')
+      + ') — ' + done + '/' + total + ' weeks built and safe. Retry to continue, Save to keep, or Cancel.';
+  }
+  document.getElementById('genStart').style.display = 'none';
+  document.getElementById('genConfirmGate').style.display = 'none';
+  document.getElementById('genActions').style.display = 'none';
+  const rec = document.getElementById('genRecovery');
+  if (rec) rec.style.display = 'flex';
+}
+
+function hideGenRecovery() {
+  const rec = document.getElementById('genRecovery');
+  if (rec) rec.style.display = 'none';
+}
+
+// Resume the failed block from where it stopped — never re-bills built weeks.
+async function retryGen() {
+  const c = getClient();
+  if (!c) return;
+  hideGenRecovery();
+  if (genFailedBlock === 2) return resumeBlock2(c);
+  return resumeBlock1(c);
+}
+
+// Create-or-update the program record for THIS generation session, so a
+// successful build persists with no explicit Save and a retry/extend never
+// duplicates. Title is set only on creation, so a coach rename survives later
+// auto-saves. partial=true marks a build that stopped on a failure.
+function autosaveProgram() {
+  if (!genT1) return null;
+  const data = db();
+  const c = data.clients.find(x => x.id === currentClientId);
+  if (!c) return null;
+  if (!c.programs) c.programs = [];
+  const targetId = genEditingProgramId || genAutoProgId;
+  let p = targetId ? c.programs.find(x => x.id === targetId) : null;
+  if (!p) {
+    p = {
+      id: 'p_' + Date.now(),
+      date: Date.now(),
+      title: `${c.name} · ${c.avatar} · ${c.level} · Block ${(c.programs.length + 1)}`,
+      avatar: c.avatar, level: c.level, freq: c.freq, goal: c.goal,
+      flags: [...(c.flags||[])],
+    };
+    c.programs.push(p);
+    genAutoProgId = p.id;
+  }
+  p.block1 = genT1;
+  p.block2 = genT2;
+  p.block1Only = !genT2;
+  p.partial = (genFailedBlock !== 0);
+  c.activeProgramId = p.id;
+  saveDb(data);
+  return p;
 }
 
 function copyProgram() {
@@ -4350,50 +4451,18 @@ function copyProgram() {
 
 function saveProgramToClient() {
   if (!genT1) { toast('Generate a program first.'); return; }
-  const data = db();
-  const c = data.clients.find(x => x.id === currentClientId);
-  if (!c) return;
-  if (!c.programs) c.programs = [];
-
-  // Extending an existing program (Add Weeks 5–8): update it in place so weeks 5–8
-  // persist onto the same program instead of creating a duplicate.
-  if (genEditingProgramId) {
-    const existing = c.programs.find(x => x.id === genEditingProgramId);
-    if (existing) {
-      existing.block1 = genT1;
-      existing.block2 = genT2;
-      existing.block1Only = !genT2;
-      c.activeProgramId = existing.id;
-      saveDb(data);
-      toast('Program updated: ' + existing.title + ' ✓');
-      renderProfile(currentClientId);
-      return;
-    }
+  // The build is already auto-saved (create-or-update, no duplicates). This
+  // button confirms and lets the coach rename the record in place.
+  const p = autosaveProgram();
+  if (!p) { toast('Could not save — no client selected.'); return; }
+  const programName = prompt('Name this program:', p.title);
+  if (programName !== null && programName.trim()) {
+    const data = db();
+    const c = data.clients.find(x => x.id === currentClientId);
+    const pp = c && (c.programs || []).find(x => x.id === p.id);
+    if (pp) { pp.title = programName.trim(); saveDb(data); }
   }
-
-  const defaultName = `${c.name} · ${c.avatar} · ${c.level} · Block ${(c.programs.length + 1)}`;
-  const programName = prompt('Name this program:', defaultName);
-  if (programName === null) return;
-
-  const program = {
-    id: 'p_' + Date.now(),
-    date: Date.now(),
-    title: programName.trim() || defaultName,
-    avatar: c.avatar,
-    level: c.level,
-    freq: c.freq,
-    goal: c.goal,
-    flags: [...(c.flags||[])],
-    block1: genT1,
-    block2: genT2,
-    block1Only: !genT2, // flag if only block 1 generated
-  };
-  c.programs.push(program);
-  // Auto set as active
-  c.activeProgramId = program.id;
-  saveDb(data);
-  toast('Program saved: ' + program.title + ' ✓');
-  // Keep genT1 alive — don't reset generator
+  toast('Program saved: ' + p.title + (p.partial ? ' (incomplete)' : '') + ' ✓');
   renderProfile(currentClientId);
 }
 
