@@ -689,7 +689,16 @@ function db() {
   catch(e) { return { clients: [] }; }
 }
 function saveDb(data) {
-  try { localStorage.setItem(DB_KEY, JSON.stringify(data)); } catch(e) {}
+  try {
+    localStorage.setItem(DB_KEY, JSON.stringify(data));
+  } catch(e) {
+    // Loud, never a silent no-op (Fix #4): a swallowed quota error used to make
+    // callers believe a save succeeded — including the inbox sweep, which then
+    // cleared the mailbox server-side and lost the week. Surface it and rethrow.
+    console.error('saveDb failed:', e);
+    try { toast('⚠ SAVE FAILED — device storage full. Change NOT saved. Free space & retry.'); } catch(_) {}
+    throw e;
+  }
 }
 function getKey() {
   try { const k = localStorage.getItem(API_KEY); if(k) return k; } catch(e) {}
@@ -863,16 +872,34 @@ async function sweepInboxes(opts) {
 
   let imported = 0;
   const names = [];
+  const WORKER = 'https://mrs-nutrireader-worker.mrs-system.workers.dev';
   await Promise.all(clients.map(async c => {
     try {
-      const res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/inbox?clientId=' + encodeURIComponent(c.id));
+      const res = await fetch(WORKER + '/inbox?clientId=' + encodeURIComponent(c.id));
       if (!res.ok) return;
       const data = await res.json();
       const items = (data && data.items) || [];
-      items.forEach(payload => {
-        const outcome = mergeClientWeek(payload);
-        if (outcome.success) { imported++; if (!names.includes(outcome.clientName)) names.push(outcome.clientName); }
-      });
+      const ackIds = [];
+      for (const payload of items) {
+        let outcome;
+        // mergeClientWeek calls the now-loud saveDb; a failed save throws here,
+        // so the item is NOT acked and stays in the mailbox for the next sweep.
+        try { outcome = mergeClientWeek(payload); }
+        catch(e) { outcome = { success: false }; }
+        if (outcome.success) {
+          imported++;
+          if (!names.includes(outcome.clientName)) names.push(outcome.clientName);
+          if (payload._ackId != null) ackIds.push(payload._ackId);
+        }
+      }
+      // Clear ONLY confirmed-saved items (Fix #4): deletion is conditional on a
+      // confirmed local save, never a side effect of the read.
+      if (ackIds.length) {
+        await fetch(WORKER + '/inbox/ack', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientId: c.id, ackIds })
+        });
+      }
     } catch(e) { /* one mailbox failing must not abort the rest */ }
   }));
 
