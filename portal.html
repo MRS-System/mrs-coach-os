@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=30 -->
+<!-- portal cache-buster v=31 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -3865,7 +3865,13 @@ function loadSharedProfile() {
       if (!el) throw new Error('no input');
       el.value = btoa(unescape(encodeURIComponent(jsonText)));
       loadProfileFromCode();
-      try { history.replaceState(null, '', window.location.pathname); } catch(e) {}
+      // Deliberately DO NOT strip ?p= from the URL. iOS "Add to Home Screen"
+      // bookmarks the current URL; stripping the token made the home-screen icon
+      // launch bare into iOS's separate standalone localStorage bucket, so the
+      // profile vanished on first icon open. Keeping ?p= lets the standalone app
+      // re-resolve the profile from the Worker into its own bucket on launch.
+      // Re-fetching on each load is intentional — it is also the channel by which
+      // a coach-updated program reaches the client.
     })
     .catch(function(){
       showToast('Could not open your profile link — paste your profile code on the Coach tab.');
