@@ -1983,6 +1983,15 @@ let clientId=null,client=null;
 let workoutType=null,selectedRPE=null;
 
 // \u2500\u2500 Day Strip \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Fix: #todayDate under the "Daily Check-In" header was a hardcoded 'Loading...'
+// placeholder that nothing ever set (check-in data is synchronous — there is no
+// load). Populate it with today's date. Non-protected sibling; renderNRDailyLog
+// stays byte-identical.
+function renderTodayDate(){
+  var el=document.getElementById('todayDate');
+  if(el) el.textContent=new Date().toLocaleDateString('en-US',{weekday:'long',month:'short',day:'numeric'});
+}
+
 function renderDayStrip(){
   const pdb=portalDb(),days=getWeekDays();
   document.getElementById('dayStrip').innerHTML=days.map(d=>{
@@ -3569,7 +3578,8 @@ function buildWeeklyPayload(offset=0) {
   return {clientId, clientName:client?.name||'Unknown', weekKey:wk, generatedAt:new Date().toISOString(),
     weekScore:scores.total, scoreBreakdown:scores, streak:pdb.streak, personalBest:pdb.personalBest||0,
     checkins:Object.fromEntries(days.map(d=>[d.key, pdb.checkins[d.key]||null])),
-    workoutLogs, slotLogs, mealScans, barcodeScans, avgNutriScore};
+    workoutLogs, slotLogs, mealScans, barcodeScans, avgNutriScore,
+    retestDone: pdb.retestDone||{}}; // client "completed my reassessment" signal → coach
 }
 
 // Mailbox send: POST the weekly payload to the client's fixed cloud mailbox
@@ -3710,6 +3720,7 @@ function _weekHasContent(p) {
   if (p.mealScans && Object.keys(p.mealScans).length) return true;
   if (p.barcodeScans && Object.keys(p.barcodeScans).length) return true;
   if (p.checkins && Object.values(p.checkins).some(v => v)) return true;
+  if (p.retestDone && Object.keys(p.retestDone).length) return true;
   return false;
 }
 
@@ -3833,7 +3844,65 @@ function init() {
   goTab('today', 'tab-today');
 }
 
+// ── Week 4 / Week 8 retest reminder (persistent, dismissible, NON-blocking) ──
+// Prepends a banner to #screen-today when the client reaches the checkpoint
+// window and it isn't complete. Dismiss is session-scoped (in-memory) so it
+// reappears every app open; nothing is ever locked. Clears when the coach records
+// the measurement (client.measurements[wk], via the ?p= refresh) OR the client
+// taps "completed" (pdb.retestDone[wk], which also rides to the coach in the
+// weekly payload). No active program / unparseable date -> no banner.
+var _retestDismissed = {};
+
+function retestDueCheckpoint(){
+  if(!client) return null;
+  var programs=client.programs||[];
+  var active=programs.find(function(p){return p.id===client.activeProgramId;})||programs[programs.length-1];
+  if(!active) return null;
+  var start=new Date(active.date||client.createdAt);
+  if(isNaN(start.getTime())) return null;
+  var day=Math.floor((Date.now()-start.getTime())/(24*60*60*1000));
+  var done=(portalDb().retestDone)||{};
+  var m=client.measurements, mObj=(m&&!Array.isArray(m))?m:{};
+  if(day>=56 && !mObj.week8 && !done.week8) return {wk:'week8',label:'Week 8'};
+  if(day>=28 && !mObj.week4 && !done.week4) return {wk:'week4',label:'Week 4'};
+  return null;
+}
+
+function markRetestDone(wk){
+  var pdb=portalDb();
+  if(!pdb.retestDone) pdb.retestDone={};
+  pdb.retestDone[wk]=Date.now();
+  savePortalDb(pdb);
+  var el=document.getElementById('retestReminder'); if(el) el.remove();
+  showToast('Marked done ✓ — your coach will see it.');
+  try{ deliverCurrentWeek(); }catch(e){}
+}
+
+function renderRetestReminder(){
+  var host=document.getElementById('screen-today');
+  var existing=document.getElementById('retestReminder');
+  if(existing) existing.remove();
+  if(!host) return;
+  var due=retestDueCheckpoint();
+  if(!due || _retestDismissed[due.wk]) return;
+  var div=document.createElement('div');
+  div.id='retestReminder';
+  div.style.cssText='background:rgba(201,162,39,.12);border:1px solid rgba(201,162,39,.35);border-radius:12px;padding:14px 14px 12px;margin:0 0 14px';
+  div.innerHTML=
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">'
+    +'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:18px;letter-spacing:.04em;color:var(--gold);line-height:1.1">⏱ Time for your '+due.label+' reassessment</div>'
+    +'<button id="retestDismiss" aria-label="Dismiss" style="background:none;border:none;color:var(--dim2);font-size:22px;line-height:1;cursor:pointer;padding:0 2px;flex-shrink:0">×</button>'
+    +'</div>'
+    +'<div style="font-size:12px;color:var(--dim2);line-height:1.6;margin-top:5px">Check with your coach to schedule it. Keep training in the meantime — nothing here is locked.</div>'
+    +'<button id="retestDoneBtn" style="margin-top:11px;padding:9px 14px;background:var(--gold);border:none;border-radius:8px;color:var(--black);font-family:\'Bebas Neue\',sans-serif;font-size:14px;letter-spacing:.06em;cursor:pointer">I completed my reassessment</button>';
+  host.insertBefore(div, host.firstChild);
+  var dis=document.getElementById('retestDismiss'); if(dis) dis.onclick=function(){ _retestDismissed[due.wk]=true; div.remove(); };
+  var dn=document.getElementById('retestDoneBtn'); if(dn) dn.onclick=function(){ markRetestDone(due.wk); };
+}
+
 window.addEventListener('load', init);
+window.addEventListener('load', renderTodayDate);
+window.addEventListener('load', renderRetestReminder);
 // init() (protected) renders the program on load but cannot be edited to add
 // the corrective card, so surface it via a SEPARATE load listener that fires
 // right after init. No-op when there is no corrective section.

@@ -842,6 +842,7 @@ function mergeClientWeek(data) {
     mealScans: data.mealScans || {},
     barcodeScans: data.barcodeScans || {}, // Fix #5: carry packaged-food (barcode) items to the coach
     avgNutriScore: data.avgNutriScore || null,
+    retestDone: data.retestDone || {}, // client "completed my reassessment" signal (informational; measurements stay authoritative)
   });
   c.lastSeen = Date.now();
   database.clients[clientIdx] = c;
@@ -1353,13 +1354,28 @@ function renderDashboard() {
     return missing.length > 0;
   });
 
-  // Week 4 due alert
+  // Week 4 due alert. Fall back to createdAt when a program has no .date so the
+  // reminder degrades gracefully instead of vanishing (NaN) — the bug flagged in
+  // the retest-reminder spec.
   const week4Due = clients.filter(c => {
     if (c.status === 'inactive') return false;
     const prog = (c.programs||[]).find(p => p.id === c.activeProgramId);
     if (!prog) return false;
-    const daysSince = (Date.now() - prog.date) / (1000*60*60*24);
+    const start = prog.date || c.createdAt;
+    if (!start) return false;
+    const daysSince = (Date.now() - start) / (1000*60*60*24);
     return daysSince >= 26 && !c.measurements?.week4;
+  });
+
+  // Week 8 due alert (mirror of week 4).
+  const week8Due = clients.filter(c => {
+    if (c.status === 'inactive') return false;
+    const prog = (c.programs||[]).find(p => p.id === c.activeProgramId);
+    if (!prog) return false;
+    const start = prog.date || c.createdAt;
+    if (!start) return false;
+    const daysSince = (Date.now() - start) / (1000*60*60*24);
+    return daysSince >= 54 && !c.measurements?.week8;
   });
 
   // Week 4 incomplete data alert
@@ -1435,6 +1451,19 @@ function renderDashboard() {
     <div style="background:rgba(201,162,39,.08);border:1px solid rgba(201,162,39,.2);border-radius:14px;padding:1rem 1.25rem;margin-bottom:1rem">
       <div style="font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:.75rem">⏱ Week 4 Reassessment Due — ${week4Due.length} client${week4Due.length!==1?'s':''}</div>
       ${week4Due.map(c => `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.5rem 0;border-bottom:1px solid rgba(201,162,39,.1)">
+          <span style="font-size:13px;font-weight:600;color:var(--white)">${c.name}</span>
+          <button class="btn sm gold" onclick="nav('profile','${c.id}')" style="white-space:nowrap;flex-shrink:0">Open Profile</button>
+        </div>`).join('')}
+    </div>`;
+  }
+
+  // Week 8 due section
+  if (week8Due.length > 0) {
+    alertHtml += `
+    <div style="background:rgba(201,162,39,.08);border:1px solid rgba(201,162,39,.2);border-radius:14px;padding:1rem 1.25rem;margin-bottom:1rem">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:.75rem">🎓 Week 8 Reassessment Due — ${week8Due.length} client${week8Due.length!==1?'s':''}</div>
+      ${week8Due.map(c => `
         <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.5rem 0;border-bottom:1px solid rgba(201,162,39,.1)">
           <span style="font-size:13px;font-weight:600;color:var(--white)">${c.name}</span>
           <button class="btn sm gold" onclick="nav('profile','${c.id}')" style="white-space:nowrap;flex-shrink:0">Open Profile</button>
