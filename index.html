@@ -1680,6 +1680,9 @@ function renderProfile(clientId) {
           ${c.measurements?.intake ? `<button class="btn sm" onclick="openMeasure('${c.id}','intake')">✏ Edit Intake</button>` : ''}
           ${c.measurements?.week4 ? `<button class="btn sm" onclick="openMeasure('${c.id}','week4')">✏ Edit Week 4</button>` : ''}
           ${c.measurements?.week8 ? `<button class="btn sm" onclick="openMeasure('${c.id}','week8')">✏ Edit Week 8</button>` : ''}
+          ${c.portalBlobId
+            ? `<button class="btn sm" style="background:rgba(201,162,39,.12);color:var(--gold);border-color:rgba(201,162,39,.3)" onclick="updatePortal('${c.id}')">📲 Update Portal</button>`
+            : `<button class="btn sm" style="opacity:.5;cursor:not-allowed" disabled title="Share a portal link with this client first (📤 Export Client), then you can push updates">📲 Update Portal</button>`}
         </div>
       </div>
 
@@ -4605,14 +4608,11 @@ async function createShareLink(profileJson) {
   return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=31';
 }
 
-function exportClient(clientId) {
-  var database = db();
-  var c = (database.clients || []).find(function(x){ return x.id === clientId; });
-  if (!c) { toast("Client not found"); return; }
-
-  var portalUrl = "https://mrs-system.github.io/mrs-coach-os/portal.html?client=" + c.id + "&v=31";
-
-  var profileData = {
+// Shared builder for the portal profile blob — used by BOTH the ?p= share
+// (createShareLink) and the Update Portal overwrite, so the pushed shape always
+// matches the original share (measurements + full program text included).
+function buildPortalProfile(c) {
+  return {
     id: c.id, name: c.name, age: c.age||"", gender: c.gender||"M",
     avatar: c.avatar||"", level: c.level||"Beginner", freq: c.freq||"3x/week",
     goal: c.goal||"", flags: c.flags||[], cohort: c.cohort||"",
@@ -4627,68 +4627,40 @@ function exportClient(clientId) {
     sessionNotes:[], weeklyData:[], status:"active",
     nrKey: getNRKey()||""
   };
+}
 
+// Piece 3: overwrite the client's existing ?p= KV blob with fresh profile data
+// (measurements + program) via PUT. The portal re-fetches on every load, so the
+// client sees it on their next open. Coach-controlled explicit reveal — never an
+// auto-push on save.
+async function updatePortal(clientId) {
+  var c = (db().clients || []).find(function(x){ return x.id === clientId; });
+  if (!c) return;
+  if (!c.portalBlobId) { toast('Share a portal link with ' + (c.name||'this client') + ' first, then Update Portal.'); return; }
+  try {
+    var res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile?id=' + encodeURIComponent(c.portalBlobId), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildPortalProfile(c))
+    });
+    if (!res.ok) throw new Error('status ' + res.status);
+    toast('Portal updated ✓ — ' + (c.name||'client') + ' will see the new data next time they open it.');
+  } catch(e) {
+    toast('Portal update failed — check connection and try again.');
+  }
+}
+
+function exportClient(clientId) {
+  var database = db();
+  var c = (database.clients || []).find(function(x){ return x.id === clientId; });
+  if (!c) { toast("Client not found"); return; }
+
+  var profileData = buildPortalProfile(c);
   var profileJson = JSON.stringify(profileData);
-  var so = "<scr"+"ipt>";
-  var sc = "<"+"/"+"script>";
 
-  // Encode profile into URL — strip large program text to keep URL short
-  // Programs are delivered separately via the Coach tab or weekly file
-  var slimProfile = {
-    id: profileData.id,
-    name: profileData.name,
-    age: profileData.age||'',
-    gender: profileData.gender||'M',
-    avatar: profileData.avatar||'',
-    level: profileData.level||'',
-    freq: profileData.freq||'',
-    goal: profileData.goal||'',
-    flags: profileData.flags||[],
-    cohort: profileData.cohort||'',
-    clientType: profileData.clientType||'1on1',
-    intake: profileData.intake||{},
-    measurements: profileData.measurements||[],
-    // Keep programs but strip the large block text — just metadata
-    programs: (profileData.programs||[]).map(function(p){
-      return {id:p.id,date:p.date,title:p.title||'',avatar:p.avatar||'',
-              level:p.level||'',freq:p.freq||'',goal:p.goal||'',flags:p.flags||[],
-              block1Only:p.block1Only||false,block1:'',block2:''};
-    }),
-    activeProgramId: profileData.activeProgramId||null,
-    nrKey: profileData.nrKey||'',
-    sessionNotes:[],weeklyData:[],status:'active'
-  };
-
-  var slimJson = JSON.stringify(slimProfile);
-  var encoded = btoa(unescape(encodeURIComponent(slimJson)));
-  
-  // Build the direct install link
-  var installLink = portalUrl + '&profile=' + encodeURIComponent(encoded);
-
-  // Build installer HTML — the button is just a link to the portal with profile data
-  var so = '<scr'+'ipt>';
-  var sc = '<'+'/script>';
-  var parts = [
-    '<!DOCTYPE html><html><head>',
-    '<meta charset="UTF-8">',
-    '<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">',
-    '<title>MRS Setup - ' + c.name + '</title>',
-    '<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;background:#080806;color:#f2f0e8;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px;text-align:center}',
-    '.logo{font-size:11px;letter-spacing:.2em;color:#c9a227;text-transform:uppercase;margin-bottom:12px;opacity:.6}',
-    'h1{font-size:28px;font-weight:700;color:#f2f0e8;margin-bottom:6px;line-height:1.2}',
-    '.av{display:inline-block;background:rgba(201,162,39,.12);border:1px solid rgba(201,162,39,.3);border-radius:20px;padding:6px 16px;font-size:12px;color:#c9a227;letter-spacing:.08em;text-transform:uppercase;margin-bottom:32px}',
-    '.btn{display:block;width:100%;max-width:320px;padding:22px;background:#c9a227;border:none;border-radius:16px;color:#080806;font-size:22px;font-weight:700;cursor:pointer;margin:0 auto 12px;-webkit-appearance:none;text-decoration:none;text-align:center}',
-    '.note{font-size:11px;color:rgba(242,240,232,.35);margin-top:20px;line-height:1.7;max-width:280px}',
-    '</style></head><body>',
-    '<div class="logo">MRS™ · Built For The Moment™</div>',
-    '<h1>Hey ' + c.name + '!</h1>',
-    '<div class="av">' + c.avatar + ' · ' + c.freq + '</div>',
-    '<a class="btn" href="' + installLink + '">',
-    '✓ Install My Profile',
-    '</a>',
-    '<div class="note">Tap the button above. It will open your portal and install your profile automatically. You only need to do this once.</div>',
-    '</body></html>'
-  ];
+  // Onboarding is LINK-ONLY (?p=). The old ?profile= installer (encoded profile
+  // in the URL + installer HTML) was already dead code (built, never inserted)
+  // and has been removed — no profile-code generation remains anywhere.
   // Text + Email share links are built ASYNC below (in the createShareLink
   // .then) so both carry the auto-loading one-tap ?p= link — no manual paste.
 
@@ -4724,6 +4696,12 @@ function exportClient(clientId) {
   // it so tapping either auto-loads the program with no manual paste. The two
   // buttons stay disabled (dimmed, pointer-events:none) until this resolves.
   createShareLink(profileJson).then(function(link){
+    // Piece 2: remember this client's KV blob id so "Update Portal" can overwrite
+    // it in place later (link is ...?p=<id>&v=NN).
+    try {
+      var pid = (link.match(/[?&]p=([^&]+)/) || [])[1];
+      if (pid) { var _dbx = db(); var _cx = (_dbx.clients||[]).find(function(x){ return x.id===c.id; }); if (_cx) { _cx.portalBlobId = pid; saveDb(_dbx); } }
+    } catch(e) {}
     var emailSubject = 'Your MRS Portal is Ready';
     var emailBody = 'Hey ' + c.name + ',\n\nYour MRS portal is ready. Tap this link on your phone — it opens your portal and installs your program automatically:\n\n'
       + link + '\n\nThen save it to your home screen. That is it — no codes to paste. Text me when you are set up!';
