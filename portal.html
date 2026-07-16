@@ -2253,10 +2253,19 @@ function checkStreak(){
 function renderProgress(){
   const el=document.getElementById('progressContent');
   if(!client){el.innerHTML=`<div class="no-client"><div class="no-client-icon">\ud83d\udcca</div><div class="no-client-title">No Data Yet</div><div class="no-client-sub">Upload your client file on the Coach tab to see your progress.</div></div>`;return;}
-  const ms=client.measurements||[];
-  const intake=ms.find(m=>m.checkpoint==='intake')||ms[0]||null;
-  const wk4=ms.find(m=>m.checkpoint==='week4')||null;
-  const wk8=ms.find(m=>m.checkpoint==='week8')||null;
+  // The Coach OS stores measurements as an OBJECT keyed by checkpoint
+  // ({intake,week4,week8}); tolerate a legacy array-of-records-with-.checkpoint
+  // too so an old-shape profile never throws here (ms.find on an object threw,
+  // breaking the whole guarded load chain — program included).
+  const msRaw=client.measurements;
+  const cp=Array.isArray(msRaw)
+    ? { intake: msRaw.find(function(m){return m&&m.checkpoint==='intake';})||msRaw[0]||null,
+        week4:  msRaw.find(function(m){return m&&m.checkpoint==='week4';})||null,
+        week8:  msRaw.find(function(m){return m&&m.checkpoint==='week8';})||null }
+    : (msRaw&&typeof msRaw==='object' ? msRaw : {});
+  const intake=cp.intake||null;
+  const wk4=cp.week4||null;
+  const wk8=cp.week8||null;
   const latest=wk8||wk4||intake;
   const MRS_STANDARDS={
     Builder:{Beginner:{kbdl:10,pushups:8,plank:30,row:200},Intermediate:{kbdl:15,pushups:12,plank:50,row:185},Advanced:{kbdl:20,pushups:15,plank:70,row:170}},
