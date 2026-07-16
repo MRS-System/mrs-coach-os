@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Matches the production portal so the home-screen icon launches in the SAME
+     standalone mode. This page deliberately does NOT strip its own URL. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>iOS Query-Retention Test</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#080806;color:#f2f0e8;margin:0;padding:26px;line-height:1.5}
+  h1{font-size:20px;margin:0 0 6px}
+  .label{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#c9a227;margin-top:22px;margin-bottom:6px}
+  .href{font-size:14px;word-break:break-all;background:#161613;padding:10px;border-radius:8px}
+  .q{font-size:30px;font-weight:900;padding:18px;border-radius:12px;text-align:center}
+  .ok{background:#14532d;color:#86efac}
+  .bad{background:#7f1d1d;color:#fca5a5}
+  .mode{font-size:18px;font-weight:800}
+  .verdict{font-size:17px;font-weight:800;padding:14px;border-radius:10px;margin-top:8px}
+</style>
+</head>
+<body>
+<h1>iOS “keep the&nbsp;?query” test</h1>
+<div style="font-size:13px;color:rgba(242,240,232,.6)">This page does not strip its URL. It just reads out what iOS handed the launch.</div>
+
+<div class="label">Full launch URL</div>
+<div class="href" id="href">—</div>
+
+<div class="label">Query string this launch received</div>
+<div class="q" id="query">—</div>
+
+<div class="label">Launch mode</div>
+<div class="mode" id="mode">—</div>
+
+<div class="verdict" id="verdict">—</div>
+
+<script>
+  var qs = window.location.search || '';
+  var hasTest = /[?&]test=123(\b|&|$)/.test(qs);
+  var standalone = (window.navigator.standalone === true) ||
+                   (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+
+  document.getElementById('href').textContent = window.location.href;
+
+  var q = document.getElementById('query');
+  q.textContent = qs ? qs : '(EMPTY — no query)';
+  q.className = 'q ' + (hasTest ? 'ok' : 'bad');
+
+  document.getElementById('mode').textContent =
+    standalone ? 'STANDALONE — home-screen icon ✅' : 'Safari browser (not the icon yet)';
+
+  var v = document.getElementById('verdict');
+  if (!standalone) {
+    v.style.background = '#1c1c19'; v.style.color = '#e8c97a';
+    v.textContent = 'Step 1 done. Now: Share → Add to Home Screen → Add. Then close Safari and open the ICON, and read this page again.';
+  } else if (hasTest) {
+    v.style.background = '#14532d'; v.style.color = '#86efac';
+    v.textContent = 'PASS ✅ — iOS kept ?test=123 in the icon. The one-line fix (stop stripping ?p=) will work.';
+  } else {
+    v.style.background = '#7f1d1d'; v.style.color = '#fca5a5';
+    v.textContent = 'FAIL ❌ — iOS dropped the query from the icon. Retaining ?p= would NOT be enough; report this back.';
+  }
+</script>
+</body>
+</html>
