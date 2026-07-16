@@ -1747,12 +1747,12 @@ input[type=range]::-moz-range-thumb {
       <div class="coach-section" id="mySetupSection">
         <div class="coach-section-title">⚙️ My Setup</div>
         <div id="profileStatus"></div>
+        <!-- Onboarding is link-only: clients open the ?p= link, never paste a code.
+             #profileCodeInput is kept hidden as the internal ?p= data conduit
+             (loadSharedProfile writes the resolved profile here, then loadProfileFromCode
+             reads it). Do NOT remove this element. -->
         <div id="profilePasteSection" style="margin-top:12px">
-          <div style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;font-family:'Barlow Condensed',sans-serif">Paste Profile Code</div>
-          <div style="font-size:11px;color:var(--dim2);margin-bottom:8px;line-height:1.6">Your coach will send you a profile code. Paste it below and tap Load.</div>
-          <textarea id="profileCodeInput" placeholder="Paste your profile code here..."
-            style="width:100%;background:var(--black3);border:1px solid var(--border2);border-radius:10px;padding:12px;color:var(--white);font-family:monospace;font-size:11px;min-height:80px;resize:none;outline:none;margin-bottom:8px"></textarea>
-          <button onclick="loadProfileFromCode()" style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer;-webkit-appearance:none">Load Profile</button>
+          <textarea id="profileCodeInput" style="display:none"></textarea>
         </div>
         <div id="mySetupContent" style="margin-top:12px"></div>
       </div>
@@ -2252,7 +2252,7 @@ function checkStreak(){
 // \u2500\u2500 Progress \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function renderProgress(){
   const el=document.getElementById('progressContent');
-  if(!client){el.innerHTML=`<div class="no-client"><div class="no-client-icon">\ud83d\udcca</div><div class="no-client-title">No Data Yet</div><div class="no-client-sub">Upload your client file on the Coach tab to see your progress.</div></div>`;return;}
+  if(!client){el.innerHTML=`<div class="no-client"><div class="no-client-icon">\ud83d\udcca</div><div class="no-client-title">No Data Yet</div><div class="no-client-sub">Open the link your coach sent you to see your progress.</div></div>`;return;}
   // The Coach OS stores measurements as an OBJECT keyed by checkpoint
   // ({intake,week4,week8}); tolerate a legacy array-of-records-with-.checkpoint
   // too so an old-shape profile never throws here (ms.find on an object threw,
@@ -2497,7 +2497,7 @@ function renderCoachTab(){
   const scores=calcWeekScore();
   document.getElementById('coachTabScore').textContent=scores.total;
   const setupEl=document.getElementById('mySetupContent');if(!setupEl)return;
-  if(!client){setupEl.innerHTML=`<div style="font-size:13px;color:var(--dim);line-height:1.7">No profile loaded yet. Upload your client file above to get started.</div>`;return;}
+  if(!client){setupEl.innerHTML=`<div style="font-size:13px;color:var(--dim);line-height:1.7">No profile loaded yet. Open the link your coach sent you to get started.</div>`;return;}
   const programs=client.programs||[];
   const active=programs.find(p=>p.id===client.activeProgramId)||programs[programs.length-1];
   const startDate=active?new Date(active.date||client.createdAt):null;
@@ -2610,6 +2610,9 @@ function loadProfileFromCode() {
         name:profileData.name, avatar:profileData.avatar, freq:profileData.freq,
         goal:profileData.goal, level:profileData.level, flags:profileData.flags,
         intake:profileData.intake||existing.intake, nrKey:profileData.nrKey||existing.nrKey,
+        // Piece 5: carry fresh coach checkpoint data on re-fetch. Without this the
+        // merge kept the client's OLD measurements and dropped a Week-4 update.
+        measurements:profileData.measurements||existing.measurements,
         programs:profileData.programs&&profileData.programs.some(function(p){return p.block1;})?profileData.programs:existing.programs,
       });
     } else { pdb.clientProfile = profileData; }
@@ -3883,7 +3886,7 @@ function loadSharedProfile() {
       // a coach-updated program reaches the client.
     })
     .catch(function(){
-      showToast('Could not open your profile link — paste your profile code on the Coach tab.');
+      showToast('Couldn\'t open your profile link. Ask your coach to re-send it.');
     });
 }
 window.addEventListener('DOMContentLoaded', loadSharedProfile);
