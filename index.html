@@ -4675,6 +4675,9 @@ function exportClient(clientId) {
     + '<div style="font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;font-family:Barlow Condensed,sans-serif">Send Auto-Loading Setup Link</div>'
     + '<div id="oneTapLinkStatus" style="background:rgba(201,162,39,.06);border:1px solid rgba(201,162,39,.15);border-radius:8px;padding:11px;font-size:12px;color:var(--dim);margin-bottom:16px">Generating secure link…</div>'
 
+    + '<button id="shareCopyBtn" disabled onclick="return false" style="display:block;width:100%;padding:14px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:default;opacity:.5;margin-bottom:6px;text-align:center;-webkit-appearance:none">🔗 Copy Link</button>'
+    + '<div style="font-size:10px;color:var(--dim);text-align:center;margin-bottom:14px">Works on any device — paste into any email or message app.</div>'
+
     + (c.email
       ? '<a id="shareEmailBtn" href="#" aria-disabled="true" style="display:block;width:100%;padding:13px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:17px;letter-spacing:.1em;cursor:default;opacity:.5;pointer-events:none;margin-bottom:8px;text-align:center;text-decoration:none">Email ' + c.name + '</a>'
       : '<div style="background:rgba(201,162,39,.06);border:1px solid rgba(201,162,39,.15);border-radius:8px;padding:10px;font-size:11px;color:var(--dim);margin-bottom:8px">No email on file. Add email in client profile for one-tap send.</div>')
@@ -4718,6 +4721,13 @@ function exportClient(clientId) {
       textEl.href = 'sms:' + (c.phone||'') + '?body=' + encodeURIComponent(smsBody);
       textEl.style.opacity = '1'; textEl.style.pointerEvents = 'auto'; textEl.style.cursor = 'pointer'; textEl.removeAttribute('aria-disabled');
     }
+    // Copy Link: universal, device-agnostic. Copies the SAME resolved ?p= link
+    // Email/Text carry. Enabled only now that the link has resolved (same gating).
+    var copyEl = document.getElementById('shareCopyBtn');
+    if (copyEl) {
+      copyEl.disabled = false; copyEl.style.opacity = '1'; copyEl.style.cursor = 'pointer';
+      copyEl.onclick = function(){ copyShareLink(link, copyEl); return false; };
+    }
   }).catch(function(){
     var statusEl = document.getElementById('oneTapLinkStatus');
     if (statusEl) { statusEl.textContent = 'Could not generate the secure link — check your connection and reopen this dialog.'; statusEl.style.color = 'var(--red)'; }
@@ -4726,6 +4736,40 @@ function exportClient(clientId) {
 
 function closeMeasureModal(){
   document.getElementById('measureModal').classList.remove('active');
+}
+
+// Copy the resolved ?p= setup link to the clipboard — the SAME link Email/Text
+// carry. Universal path: works on desktop (no Messages/Mail app needed) and where
+// sms:/mailto: fail to launch. Async Clipboard API with a legacy execCommand
+// fallback for older or non-secure-context browsers, with clear feedback.
+function copyShareLink(link, btn) {
+  function done() {
+    var statusEl = document.getElementById('oneTapLinkStatus');
+    if (statusEl) { statusEl.textContent = 'Link copied ✓ — paste it into any email or message.'; statusEl.style.color = 'var(--green-br)'; }
+    if (btn) { var orig = btn.textContent; btn.textContent = '✓ Copied'; setTimeout(function(){ btn.textContent = orig; }, 1800); }
+  }
+  function fail() {
+    var statusEl = document.getElementById('oneTapLinkStatus');
+    if (statusEl) { statusEl.textContent = 'Could not copy automatically. Select and copy this link: ' + link; statusEl.style.color = 'var(--gold)'; }
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(done, function(){ if (legacyCopy(link)) done(); else fail(); });
+    } else {
+      if (legacyCopy(link)) done(); else fail();
+    }
+  } catch(e) { if (legacyCopy(link)) done(); else fail(); }
+}
+
+function legacyCopy(text) {
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    var ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return !!ok;
+  } catch(e) { return false; }
 }
 
 function exportClientFile(clientId) {
