@@ -1616,7 +1616,7 @@ input[type=range]::-moz-range-thumb {
             <span class="slider-label">⚡ Energy</span>
             <span class="slider-val" id="energyVal">5</span>
           </div>
-          <input type="range" min="1" max="10" value="5" id="energySlider" oninput="document.getElementById('energyVal').textContent=this.value;autoSaveWellness()">
+          <input type="range" min="1" max="10" value="5" id="energySlider" oninput="this.dataset.touched='1';document.getElementById('energyVal').textContent=this.value;autoSaveWellness()">
         </div>
 
         <div class="slider-field">
@@ -1624,7 +1624,7 @@ input[type=range]::-moz-range-thumb {
             <span class="slider-label">😴 Sleep Quality</span>
             <span class="slider-val" id="sleepVal">5</span>
           </div>
-          <input type="range" min="1" max="10" value="5" id="sleepSlider" oninput="document.getElementById('sleepVal').textContent=this.value;autoSaveWellness()">
+          <input type="range" min="1" max="10" value="5" id="sleepSlider" oninput="this.dataset.touched='1';document.getElementById('sleepVal').textContent=this.value;autoSaveWellness()">
         </div>
 
         <div class="slider-field" style="margin-bottom:0">
@@ -1632,7 +1632,7 @@ input[type=range]::-moz-range-thumb {
             <span class="slider-label">🧠 Stress</span>
             <span class="slider-val" id="stressVal">5</span>
           </div>
-          <input type="range" min="1" max="10" value="5" id="stressSlider" oninput="document.getElementById('stressVal').textContent=this.value;autoSaveWellness()">
+          <input type="range" min="1" max="10" value="5" id="stressSlider" oninput="this.dataset.touched='1';document.getElementById('stressVal').textContent=this.value;autoSaveWellness()">
           <div style="font-size:10px;color:var(--dim);margin-top:4px">Lower stress = higher score</div>
         </div>
       </div>
@@ -2119,12 +2119,16 @@ function saveWorkoutLog(){
 
 // Wellness auto-save
 function autoSaveWellness(){
-  const pdb=portalDb();
-  if(!pdb.checkins[todayKey()])pdb.checkins[todayKey()]={};
-  pdb.checkins[todayKey()].energy=parseInt(document.getElementById('energySlider').value);
-  pdb.checkins[todayKey()].sleep=parseInt(document.getElementById('sleepSlider').value);
-  pdb.checkins[todayKey()].stress=parseInt(document.getElementById('stressSlider').value);
-  pdb.checkins[todayKey()].ts=Date.now();
+  const pdb=portalDb(),k=todayKey();
+  if(!pdb.checkins[k])pdb.checkins[k]={};
+  // Only persist a slider the client actually moved (data-touched). An untouched
+  // slider must NOT save its default (5) as if it were a real entry — moving one
+  // slider used to co-save the other two at 5, inflating the weekly score.
+  const e=document.getElementById('energySlider'),s=document.getElementById('sleepSlider'),st=document.getElementById('stressSlider');
+  if(e&&e.dataset.touched==='1')pdb.checkins[k].energy=parseInt(e.value);
+  if(s&&s.dataset.touched==='1')pdb.checkins[k].sleep=parseInt(s.value);
+  if(st&&st.dataset.touched==='1')pdb.checkins[k].stress=parseInt(st.value);
+  pdb.checkins[k].ts=Date.now();
   savePortalDb(pdb);
 }
 
@@ -2162,23 +2166,36 @@ function sundaySkip(){
 function calcWeekScore(offset=0){
   const pdb=portalDb(),days=getWeekDays(offset);
   const freq=client?(client.freq==='2x/week'?2:client.freq==='4x/week'?4:3):3;
-  let protein=0,water=0,workouts=0,energySum=0,sleepSum=0,stressSum=0,dayCount=0;
+  let protein=0,water=0,workouts=0;
+  let energySum=0,energyDays=0,sleepSum=0,sleepDays=0,stressSum=0,stressDays=0,daysLogged=0;
   days.forEach(d=>{
     const ci=pdb.checkins[d.key];if(!ci)return;
+    const any=(ci.protein===true||ci.protein==='yes')||(ci.water===true||ci.water==='yes')
+      ||(ci.workout==='yes'||ci.workout===true)||ci.energy!=null||ci.sleep!=null||ci.stress!=null
+      ||(ci.meals&&ci.meals.length)||(ci.barcodeItems&&ci.barcodeItems.length);
+    if(any)daysLogged++;
     if(ci.protein===true||ci.protein==='yes')protein++;
     if(ci.water===true||ci.water==='yes')water++;
     if(ci.workout==='yes'||ci.workout===true)workouts++;
-    if(ci.energy){energySum+=ci.energy;sleepSum+=ci.sleep||5;stressSum+=ci.stress||5;dayCount++;}
+    // Only real entries count — no defaulting an untouched slider to 5.
+    if(ci.energy!=null){energySum+=ci.energy;energyDays++;}
+    if(ci.sleep!=null){sleepSum+=ci.sleep;sleepDays++;}
+    if(ci.stress!=null){stressSum+=ci.stress;stressDays++;}
   });
+  const clamp=v=>Math.max(0,Math.min(7,Math.round(v)));
   const workoutScore=freq>0?Math.min(7,Math.round((workouts/freq)*7)):0;
-  const energyScore=dayCount>0?Math.round((energySum/dayCount/10)*7):0;
-  const sleepScore=dayCount>0?Math.round((sleepSum/dayCount/10)*7):0;
-  const stressScore=dayCount>0?Math.round(((10-stressSum/dayCount)/10)*7):0;
+  // Quality categories are GATED by days actually logged (× loggedDays/7) so ONE
+  // good day can't approach 7/7 — the /49 total now reflects consistency, not a
+  // single day's quality. Energy/Sleep/Stress gate by their own logged-day count;
+  // Nutrition is a single weekly self-rating, so it gates by overall days logged.
+  const energyScore=energyDays>0?clamp((energySum/energyDays/10)*7*(energyDays/7)):0;
+  const sleepScore =sleepDays>0 ?clamp((sleepSum/sleepDays/10)*7*(sleepDays/7)):0;
+  const stressScore=stressDays>0?clamp(((10-stressSum/stressDays)/10)*7*(stressDays/7)):0;
   const wk=weekKey(offset);
   const nutritionRaw=pdb.weekScores?.[wk]?.nutrition||0;
-  const nutritionScore=Math.round((nutritionRaw/10)*7);
+  const nutritionScore=nutritionRaw>0?clamp((nutritionRaw/10)*7*(daysLogged/7)):0;
   const total=protein+water+workoutScore+energyScore+sleepScore+stressScore+nutritionScore;
-  return{protein,water,workoutScore,energyScore,sleepScore,stressScore,nutritionScore,total,workouts,freq,dayCount};
+  return{protein,water,workoutScore,energyScore,sleepScore,stressScore,nutritionScore,total,workouts,freq,dayCount:daysLogged};
 }
 
 function renderScore(){
@@ -2219,7 +2236,9 @@ function renderScore(){
 function updateNutritionScore(){
   const scores=calcWeekScore();
   const val=parseInt(document.getElementById('nutritionSlider').value);
-  const nutritionScore=Math.round((val/10)*7);
+  // Same consistency gate as calcWeekScore so the live preview matches the saved score.
+  const nGate=(scores.dayCount||0)/7;
+  const nutritionScore=Math.max(0,Math.min(7,Math.round((val/10)*7*nGate)));
   const projected=scores.total-scores.nutritionScore+nutritionScore;
   const offset=427.26-(projected/49*427.26);
   document.getElementById('scoreRingFill').style.strokeDashoffset=offset;
