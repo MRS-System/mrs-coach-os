@@ -1675,6 +1675,7 @@ function renderProfile(clientId) {
       <div class="btn-row">
         <button class="btn sm" onclick="editClient('${c.id}')">Edit</button>
         <button class="btn sm green" onclick="printProgressReport('${c.id}')">📊 Report</button>
+        <button class="btn sm" style="background:rgba(201,162,39,.12);color:var(--gold);border-color:rgba(201,162,39,.3)" onclick="printIntakeReport('${c.id}')">🎯 Intake Report</button>
         <button class="btn sm" style="background:rgba(59,130,246,.1);color:var(--blue);border-color:rgba(59,130,246,.25)" onclick="exportClient('${c.id}')">📤 Export Client</button>
         ${c.status==='inactive'?`<span style="font-size:10px;color:var(--red);font-weight:700;padding:4px 8px;background:rgba(220,38,38,.1);border-radius:6px;border:1px solid rgba(220,38,38,.2)">INACTIVE — Wk ${c.dropoutWeek||'?'}</span>`:`<button class="btn sm" style="background:rgba(220,38,38,.1);color:var(--red);border-color:rgba(220,38,38,.2)" onclick="markInactive('${c.id}')">Mark Inactive</button>`}
         <button class="btn sm red" onclick="deleteClient('${c.id}')">Delete</button>
@@ -4634,7 +4635,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=34';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=35';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4819,7 +4820,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=34',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=35',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -6009,6 +6010,384 @@ function printProgressReport(clientId) {
         +'</div>'
         +'</div>';
     })()
+    +'<script>document.fonts.ready.then(()=>{});<\/script>'
+    +'</body></html>';
+
+  const win = window.open('','_blank');
+  if (!win) { alert('Allow pop-ups then try again.'); return; }
+  win.document.write(html);
+  win.document.close();
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// INTAKE ASSESSMENT REPORT — the $100 take-home / primary sales tool.
+// Runs on INTAKE data ONLY. Reframed from self-vs-self "improvement" to
+// "your baseline vs where your avatar should be — here's the gap to close."
+// NEW, non-protected. Reuses printProgressReport's style/print machinery,
+// the MRS_STANDARDS performance rings, and the avatar progression path.
+// printProgressReport is left BYTE-IDENTICAL.
+// ══════════════════════════════════════════════════════════════════
+function printIntakeReport(clientId) {
+  const c = clientId ? (db().clients.find(x=>x.id===clientId)||getClient()) : getClient();
+  if (!c) return;
+
+  const m = c.measurements || {};
+  const intake = enrichRecord(m.intake);
+  if (!intake) { alert('No intake measurements recorded yet. Complete the intake assessment first.'); return; }
+  const gender = c.gender || 'M';
+
+  // ── PSS HERO — composite starting number + 3 pillar sub-scores ──
+  // Composite = mean of the three REAL legs (Performance / Structure /
+  // Cardio). The Function Score leg is a stub — omitted entirely.
+  const pss = calcPSS(intake, gender) || {};
+  const pillarDefs = [
+    {key:'perfScore',   label:'Performance', sub:'KB DL · Push-Ups · Row · Plank'},
+    {key:'structScore', label:'Structure',   sub:'WHR · Body Fat'},
+    {key:'cardioScore', label:'Cardio',      sub:'Resting HR · Blood Pressure'},
+  ];
+  const pillarVals = pillarDefs.map(p=>pss[p.key]).filter(v=>v!==null&&v!==undefined);
+  const composite = pillarVals.length
+    ? Math.round((pillarVals.reduce((a,b)=>a+b,0)/pillarVals.length)*10)/10
+    : null;
+
+  const pillarCards = pillarDefs.map(p=>{
+    const v = pss[p.key];
+    const col = scoreColor(v);
+    return '<div style="flex:1;background:#f8f7f3;border:1px solid #e8e5db;border-radius:10px;padding:12px 14px;text-align:center">'
+      +'<div style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#888;margin-bottom:4px">'+p.label+'</div>'
+      +'<div style="font-family:Bebas Neue,sans-serif;font-size:34px;line-height:1;color:'+(v==null?'#bbb':col)+'">'+(v==null?'—':v)+'<span style="font-size:14px;color:#aaa">/10</span></div>'
+      +'<div style="font-size:10px;font-weight:700;color:'+(v==null?'#bbb':col)+';margin-top:2px">'+(v==null?'No data':scoreLabel(v))+'</div>'
+      +'<div style="font-size:8px;color:#aaa;margin-top:4px;line-height:1.3">'+p.sub+'</div>'
+      +'</div>';
+  }).join('');
+
+  const compositeCol = scoreColor(composite);
+  const pssHero = '<div class="hero-stat" style="flex-direction:column;align-items:stretch;gap:14px">'
+    +'<div style="display:flex;align-items:center;gap:20px">'
+    +'<div class="hero-number" style="color:'+(composite==null?'#bbb':compositeCol)+'">'+(composite==null?'—':composite)+'<span style="font-size:22px;color:#aaa">/10</span></div>'
+    +'<div class="hero-label"><strong>Your Starting Score</strong>'
+    +'Composite Performance Scoring System baseline, drawn from your intake numbers. '
+    +'This is the line everything after today gets measured against.</div>'
+    +'</div>'
+    +'<div style="display:flex;gap:8px">'+pillarCards+'</div>'
+    +'</div>';
+
+  // ── PERFORMANCE — YOUR BASELINE vs YOUR AVATAR STANDARD ─────────
+  // assessGraduation returns {val,target,passed,pct} per metric against
+  // MRS_STANDARDS[avatar][level]. Framed as the roadmap, not a grade.
+  const grad = assessGraduation(c, intake);
+  const PERF = [
+    {key:'kbdl',   label:'KB Deadlift', unit:'reps', lower:false},
+    {key:'pushups',label:'Push-Ups',    unit:'reps', lower:false},
+    {key:'plank',  label:'Plank Hold',  unit:'sec',  lower:false},
+    {key:'row',    label:'500m Row',    unit:'sec',  lower:true },
+  ];
+  let perfSection = '';
+  if (grad && grad.metrics) {
+    const rows = PERF.map(f=>{
+      const mx = grad.metrics[f.key];
+      if (!mx) return '';
+      const hasVal = mx.val && !isNaN(mx.val);
+      const formNote = f.key==='pushups' && mx.formRequired
+        ? ' <span style="color:#aaa;font-size:9px">('+(mx.formRequired==='full'?'full only':'knee ok')+')</span>' : '';
+      let gapCell;
+      if (!hasVal) {
+        gapCell = '<span style="color:#aaa">— not tested —</span>';
+      } else if (mx.passed) {
+        gapCell = '<span style="font-size:11px;font-weight:800;color:#1a7a4a">✓ STANDARD MET</span>';
+      } else {
+        const gap = f.lower ? Math.round(mx.val - mx.target) : Math.round(mx.target - mx.val);
+        const gapTxt = f.lower ? gap+' sec to cut' : gap+' '+f.unit+' to add';
+        gapCell = '<span style="font-size:12px;font-weight:800;color:#c9a227">'+gapTxt+'</span>';
+      }
+      const pctW = hasVal ? Math.min(Math.max(mx.pct,0),100) : 0;
+      const barCol = mx.passed ? '#1a7a4a' : pctW>=80 ? '#c9a227' : '#dc2626';
+      return '<tr style="border-bottom:1px solid #f0ede4">'
+        +'<td style="padding:.55rem .75rem;font-size:12px;color:#555;font-weight:500">'+f.label+formNote
+          +'<div style="height:5px;background:#f0ede4;border-radius:3px;overflow:hidden;margin-top:5px;max-width:180px"><div style="width:'+pctW+'%;height:100%;background:'+barCol+';border-radius:3px"></div></div></td>'
+        +'<td style="padding:.55rem .75rem;text-align:center;font-size:14px;font-weight:800;color:#1a1a1a">'+(hasVal?mx.val:'—')+'<span style="font-size:9px;color:#aaa"> '+f.unit+'</span></td>'
+        +'<td style="padding:.55rem .75rem;text-align:center;font-size:14px;font-weight:700;color:#c9a227">'+mx.target+'<span style="font-size:9px;color:#c9a227"> '+f.unit+'</span></td>'
+        +'<td style="padding:.55rem .75rem;text-align:center">'+gapCell+'</td>'
+        +'</tr>';
+    }).join('');
+    perfSection = '<div class="section-title" style="display:flex;justify-content:space-between;align-items:baseline">'
+      +'<span>PERFORMANCE ASSESSMENT — YOUR BASELINE</span>'
+      +'<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">vs YOUR '+c.avatar.toUpperCase()+' · '+String(c.level||'').toUpperCase()+' STANDARD</span>'
+      +'</div>'
+      +'<table><thead><tr>'
+      +'<th>Movement</th><th>Your Baseline</th><th>Avatar Standard</th><th>Gap to Close</th>'
+      +'</tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+
+  // ── PERFORMANCE RINGS (reused, intake vs target) ───────────────
+  const _std = (MRS_STANDARDS[c.avatar] && MRS_STANDARDS[c.avatar][c.level]) || null;
+  const _puLabel = _std ? (_std.puForm === 'full' ? 'full only' : 'knee ok') : '';
+  const ringData = _std ? [
+    {key:'kbdl',   label:'KB DEADLIFT', color:'#c9a227', target:{t:_std.kbdl,   l:_std.kbdl+' reps'},                inv:false},
+    {key:'pushups',label:'PUSH-UPS',    color:'#1a7a4a', target:{t:_std.pushups,l:_std.pushups+' ('+_puLabel+')'},   inv:false},
+    {key:'plank',  label:'PLANK HOLD',  color:'#3b82f6', target:{t:_std.plank,  l:_std.plank+' sec'},                inv:false},
+    {key:'row',    label:'500M ROW',    color:'#a855f7', target:{t:_std.row,    l:_std.row+' sec'},                  inv:true },
+  ] : [];
+  function iring(rd) {
+    const currentVal = parseFloat(intake?.[rd.key]) || 0;
+    const tgt = rd.target.t;
+    let rawPct;
+    if (rd.inv) {
+      rawPct = currentVal>0 ? (tgt>0 ? tgt/currentVal : 0) : 0;
+    } else {
+      rawPct = tgt>0 ? currentVal/tgt : 0;
+    }
+    const fillPct = Math.min(Math.max(rawPct,0),1);
+    const pctLabel = Math.round(fillPct*100)+'%';
+    const r=42, circ=2*Math.PI*r;
+    const dash=(fillPct*circ).toFixed(1);
+    const gap=(circ-parseFloat(dash)).toFixed(1);
+    return '<div style="display:flex;flex-direction:column;align-items:center;gap:8px">'
+      +'<svg width="100" height="100" viewBox="0 0 100 100">'
+      +'<circle cx="50" cy="50" r="'+r+'" fill="none" stroke="#e8e5db" stroke-width="9"/>'
+      +'<circle cx="50" cy="50" r="'+r+'" fill="none" stroke="'+rd.color+'" stroke-width="9"'
+      +' stroke-dasharray="'+dash+' '+gap+'"'
+      +' stroke-dashoffset="'+((circ*0.25).toFixed(1))+'"'
+      +' stroke-linecap="round" transform="rotate(-90 50 50)"/>'
+      +'<text x="50" y="46" text-anchor="middle" font-family="Bebas Neue,sans-serif" font-size="20" fill="#1a1a1a">'+pctLabel+'</text>'
+      +'<text x="50" y="60" text-anchor="middle" font-family="Barlow,sans-serif" font-size="9" fill="#888">'+currentVal+'</text>'
+      +'</svg>'
+      +'<div style="text-align:center">'
+      +'<div style="font-family:Bebas Neue,sans-serif;font-size:11px;letter-spacing:.08em;color:#1a1a1a">'+rd.label+'</div>'
+      +'<div style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.1em;color:#888">TARGET '+rd.target.l.toUpperCase()+'</div>'
+      +'</div>'
+      +'</div>';
+  }
+  const hasPerf = intake?.kbdl;
+  const ringSection = (hasPerf && ringData.length) ? (
+    '<div style="margin-bottom:20px">'
+    +'<div class="section-title" style="display:flex;justify-content:space-between;align-items:baseline">'
+    +'<span>PATH TO STANDARD</span>'
+    +'<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">PERFORMANCE TARGETS · '+c.avatar.toUpperCase()+' STANDARD</span>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px">'
+    +ringData.map(iring).join('')
+    +'</div></div>'
+  ) : '';
+
+  // ── AVATAR PROGRESSION PATH (reused) ───────────────────────────
+  const avatarPathHtml = (function() {
+    const track = [];
+    let av = c.avatar;
+    let lv = c.level || 'Beginner';
+    const levels = ['Beginner','Intermediate','Advanced'];
+    const maxSteps = 12;
+    let steps = 0;
+    track.push({avatar:av, level:lv, current:true});
+    while (steps < maxSteps) {
+      const prog = MRS_PROGRESSION[av] && MRS_PROGRESSION[av][lv];
+      if (!prog) break;
+      if (prog.next === 'complete') { track.push({avatar:'Elite Maintenance', level:'', current:false, terminal:true}); break; }
+      if (prog.next === 'options') { (prog.options || []).forEach(opt => { track.push({avatar:opt, level:prog.nextLevel || 'Beginner', current:false, fork:true}); }); break; }
+      const nextAv = prog.next;
+      const nextLv = prog.nextLevel || 'Beginner';
+      const lvIdx = levels.indexOf(lv);
+      const nextLvIdx = levels.indexOf(nextLv);
+      if (nextAv === av && nextLvIdx <= lvIdx) break;
+      track.push({avatar:nextAv, level:nextLv, current:false});
+      av = nextAv; lv = nextLv; steps++;
+      if (nextAv !== c.avatar) break;
+    }
+    const dots = track.map((step, i) => {
+      const dotColor  = step.current ? '#c9a227' : step.fork ? '#a855f7' : '#ddd';
+      const nameColor = step.current ? '#1a1a1a' : step.fork ? '#a855f7' : '#bbb';
+      const nameBold  = step.current ? '700' : '400';
+      const lineColor = '#e8e5db';
+      const displayName = step.level ? step.avatar + ' ' + step.level : step.avatar;
+      return '<div style="display:flex;flex-direction:column;align-items:center;flex:1;position:relative">'
+        +(i < track.length-1 ? '<div style="position:absolute;top:6px;left:50%;right:-50%;height:2px;background:'+lineColor+';z-index:0"></div>' : '')
+        +'<div style="width:14px;height:14px;border-radius:50%;background:'+dotColor+';position:relative;z-index:1;flex-shrink:0'+(step.current?';box-shadow:0 0 0 3px #fff,0 0 0 5px #c9a227':'')+'"></div>'
+        +'<div style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:'+nameBold+';letter-spacing:.06em;text-transform:uppercase;color:'+nameColor+';margin-top:5px;text-align:center;line-height:1.3">'+displayName+'</div>'
+        +(step.current ? '<div style="font-size:8px;font-weight:700;color:#c9a227;margin-top:2px">YOU ARE HERE</div>' : '')
+        +((!step.current && i === 1 && !step.fork) ? '<div style="font-size:8px;color:#888;margin-top:2px">NEXT</div>' : '')
+        +(step.fork ? '<div style="font-size:8px;color:#a855f7;margin-top:2px">OPTION</div>' : '')
+        +'</div>';
+    }).join('');
+    return '<div style="display:flex;align-items:flex-start;gap:0">'+dots+'</div>';
+  })();
+  const avatarSection = hasPerf ? ('<div style="margin-bottom:20px;padding:14px 16px;background:#f8f7f3;border-radius:10px;border:1px solid #e8e5db">'+avatarPathHtml+'</div>') : '';
+
+  // ── STRUCTURE — BASELINE vs CLINICAL RANGE (WHO / ACSM) ─────────
+  function whrClinical(whr, g) {
+    if (whr==null||isNaN(parseFloat(whr))) return null;
+    const w = parseFloat(whr), healthy = g==='F'?0.80:0.90, moderate = g==='F'?0.85:0.95;
+    const cls = w<=healthy ? {label:'Healthy Range', color:'#1a7a4a'} : w<=moderate ? {label:'Moderate Risk', color:'#c9a227'} : {label:'Elevated Risk', color:'#dc2626'};
+    return {val:w.toFixed(3), cls, anchor:'WHO healthy ≤'+healthy.toFixed(2)+' ('+(g==='F'?'F':'M')+')'};
+  }
+  function bfClinical(bf, g) {
+    if (bf==null||isNaN(parseFloat(bf))) return null;
+    const b = parseFloat(bf), fit = g==='F'?24:17, ok = g==='F'?31:24;
+    const cls = b<=fit ? {label:'Fitness / Athletic', color:'#1a7a4a'} : b<=ok ? {label:'Acceptable', color:'#c9a227'} : {label:'Above Range', color:'#dc2626'};
+    return {val:b.toFixed(1)+'%', cls, anchor:'ACSM fitness ≤'+fit+'% ('+(g==='F'?'F':'M')+')'};
+  }
+  function structRow(name, data, source) {
+    if (!data) return '';
+    return '<div style="background:#f8f7f3;border-radius:10px;padding:14px 16px;border:1px solid #e8e5db">'
+      +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">'
+      +'<div style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#888">'+name+'</div>'
+      +'<div style="font-family:Barlow Condensed,sans-serif;font-size:8px;font-weight:700;letter-spacing:.1em;color:#bbb">'+source+'</div></div>'
+      +'<div style="display:flex;align-items:center;gap:10px">'
+      +'<div style="font-family:Bebas Neue,sans-serif;font-size:26px;color:#1a1a1a;line-height:1">'+data.val+'</div>'
+      +'<div style="padding:4px 10px;background:'+data.cls.color+'22;border-radius:6px;font-size:10px;font-weight:700;color:'+data.cls.color+'">'+data.cls.label+'</div></div>'
+      +'<div style="font-size:9px;color:#aaa;margin-top:6px">Baseline vs '+data.anchor+'</div>'
+      +'</div>';
+  }
+  const whrData = whrClinical(intake.whr, gender);
+  const bfData  = bfClinical(intake.bodyfat, gender);
+  // Raw body-composition baselines (no clinical target — labeled as such).
+  const bodyRaw = [
+    {k:'weight', label:'Body Weight', u:'lbs'},
+    {k:'waist',  label:'Waist',       u:'in'},
+    {k:'hips',   label:'Hips',        u:'in'},
+    {k:'smm',    label:'Muscle Mass', u:'lbs'},
+  ].filter(x=>intake[x.k]&&!isNaN(parseFloat(intake[x.k])));
+  const bodyRawStrip = bodyRaw.length
+    ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">'
+      +bodyRaw.map(x=>'<div style="flex:1;min-width:90px;background:#fff;border:1px solid #e8e5db;border-radius:8px;padding:8px 10px;text-align:center"><div style="font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#aaa">'+x.label+'</div><div style="font-family:Bebas Neue,sans-serif;font-size:18px;color:#1a1a1a">'+intake[x.k]+'<span style="font-size:9px;color:#aaa"> '+x.u+'</span></div></div>').join('')
+      +'</div><div style="font-size:9px;color:#bbb;margin-top:4px;font-style:italic">Baseline measurements — tracked for change, no clinical target.</div>'
+    : '';
+  const hasStruct = whrData || bfData || bodyRaw.length;
+  const structSection = hasStruct ? (
+    '<div class="section-title" style="display:flex;justify-content:space-between;align-items:baseline">'
+    +'<span>BODY COMPOSITION — BASELINE</span>'
+    +'<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">vs CLINICAL RANGE</span>'
+    +'</div>'
+    +((whrData||bfData) ? '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:4px">'+structRow('Waist-to-Hip Ratio', whrData, 'WHO')+structRow('Body Fat', bfData, 'ACSM')+'</div>' : '')
+    +bodyRawStrip
+    +'<div style="margin-bottom:24px"></div>'
+  ) : '';
+
+  // ── CARDIOVASCULAR — BASELINE vs CLINICAL RANGE (AHA/ACC) ───────
+  function rhrClass(bpm) {
+    if (!bpm) return null;
+    const r = parseFloat(bpm);
+    if (isNaN(r)) return null;
+    if (r <= 60) return {label:'Athletic', color:'#1a7a4a'};
+    if (r <= 70) return {label:'Good', color:'#1a7a4a'};
+    if (r <= 80) return {label:'Average', color:'#c9a227'};
+    if (r <= 90) return {label:'Above Average Risk', color:'#f97316'};
+    return {label:'Needs Attention', color:'#dc2626'};
+  }
+  function bpClass(bp) {
+    if (!bp || typeof bp !== 'string') return null;
+    const parts = bp.split('/');
+    if (parts.length !== 2) return null;
+    const sys = parseFloat(parts[0]), dia = parseFloat(parts[1]);
+    if (isNaN(sys)||isNaN(dia)) return null;
+    if (sys < 120 && dia < 80) return {label:'Normal', color:'#1a7a4a'};
+    if (sys < 130 && dia < 80) return {label:'Elevated', color:'#c9a227'};
+    if (sys < 140 || dia < 90) return {label:'Stage 1 HTN', color:'#f97316'};
+    return {label:'Stage 2 HTN — Refer to physician', color:'#dc2626'};
+  }
+  const rhrCls = rhrClass(intake.rhr);
+  const bpCls  = bpClass(intake.bp);
+  const hasCardio = intake.rhr || intake.bp;
+  const cardioSection = hasCardio ? (
+    '<div class="section-title" style="display:flex;justify-content:space-between;align-items:baseline">'
+    +'<span>CARDIOVASCULAR — BASELINE</span>'
+    +'<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">vs CLINICAL RANGE · AHA/ACC</span>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:24px">'
+    +'<div style="background:#f8f7f3;border-radius:10px;padding:14px 16px;border:1px solid #e8e5db">'
+    +'<div style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#888;margin-bottom:6px">Resting Heart Rate</div>'
+    +(intake.rhr?'<div style="display:flex;align-items:center;gap:10px"><div style="font-family:Bebas Neue,sans-serif;font-size:26px;color:#1a1a1a;line-height:1">'+intake.rhr+'<span style="font-size:11px;color:#aaa"> BPM</span></div>'+(rhrCls?'<div style="padding:4px 10px;background:'+rhrCls.color+'22;border-radius:6px;font-size:10px;font-weight:700;color:'+rhrCls.color+'">'+rhrCls.label+'</div>':'')+'</div>':'<div style="font-size:11px;color:#aaa">Not recorded</div>')
+    +'<div style="font-size:9px;color:#aaa;margin-top:6px">AHA · 60–100 BPM normal · &lt;60 athletic</div></div>'
+    +'<div style="background:#f8f7f3;border-radius:10px;padding:14px 16px;border:1px solid #e8e5db">'
+    +'<div style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#888;margin-bottom:6px">Blood Pressure</div>'
+    +(intake.bp?'<div style="display:flex;align-items:center;gap:10px"><div style="font-family:Bebas Neue,sans-serif;font-size:26px;color:#1a1a1a;line-height:1">'+intake.bp+'</div>'+(bpCls?'<div style="padding:4px 10px;background:'+bpCls.color+'22;border-radius:6px;font-size:10px;font-weight:700;color:'+bpCls.color+'">'+bpCls.label+'</div>':'')+'</div>':'<div style="font-size:11px;color:#aaa">Not recorded</div>')
+    +'<div style="font-size:9px;color:#aaa;margin-top:6px">AHA/ACC · &lt;120/80 normal</div></div>'
+    +'</div>'
+  ) : '';
+
+  const intakeTaglines = {
+    Comeback:"You've done hard before. This is the map back.",
+    Workhorse:"Here's the work — and exactly where it points.",
+    'Built Different':"This is the baseline. Now we build.",
+    OG:"Strong start. Here's the standard to chase.",
+    Builder:"Every number here is the standard to beat.",
+    Apex:"This is your starting line. The bar is set."
+  };
+
+  // ── FULL HTML (style block reused verbatim from printProgressReport) ──
+  const html = '<!DOCTYPE html>'
+    +'<html lang="en"><head><meta charset="UTF-8">'
+    +'<title>MRS™ Intake Assessment — '+c.name+'</title>'
+    +'<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">'
+    +'<style>'
+    +'*{box-sizing:border-box;margin:0;padding:0}'
+    +'body{font-family:Barlow,sans-serif;background:#fff;color:#1a1a1a;max-width:760px;margin:0 auto;padding:40px 32px}'
+    +'.hero{background:#0f0f0c;border-radius:12px;padding:28px 32px;margin-bottom:28px;display:flex;justify-content:space-between;align-items:flex-end}'
+    +'.brand{font-family:Bebas Neue,sans-serif;font-size:32px;letter-spacing:.06em;color:#fff;line-height:1}'
+    +'.brand em{color:#c9a227;font-style:normal}'
+    +'.brand-sub{font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.4);margin-top:3px}'
+    +'.client-block{text-align:right}'
+    +'.client-name{font-family:Bebas Neue,sans-serif;font-size:22px;letter-spacing:.04em;color:#fff;line-height:1;margin-bottom:4px}'
+    +'.client-meta{font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:#c9a227}'
+    +'.section-title{font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.05em;color:#0f0f0c;border-bottom:2px solid #0f0f0c;padding-bottom:5px;margin-bottom:14px}'
+    +'.hero-stat{background:#f8f7f3;border-radius:10px;padding:20px 24px;margin-bottom:28px;display:flex;align-items:center;gap:20px;border:1px solid #e8e5db}'
+    +'.hero-number{font-family:Bebas Neue,sans-serif;font-size:52px;color:#c9a227;line-height:1}'
+    +'.hero-label{font-size:13px;color:#555;line-height:1.5}'
+    +'.hero-label strong{color:#1a1a1a;display:block;font-size:15px;margin-bottom:2px}'
+    +'table{width:100%;border-collapse:collapse;margin-bottom:28px}'
+    +'th{font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#888;padding:.5rem .75rem;border-bottom:2px solid #0f0f0c;text-align:center}'
+    +'th:first-child{text-align:left}'
+    +'.quote{background:#0f0f0c;border-radius:10px;padding:20px 24px;margin-bottom:24px}'
+    +'.quote-text{font-family:Bebas Neue,sans-serif;font-size:20px;letter-spacing:.04em;color:#f2f0e8;line-height:1.2}'
+    +'.quote-attr{font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:#c9a227;margin-top:8px}'
+    +'.footer-bar{display:flex;justify-content:space-between;align-items:center;border-top:1px solid #e8e5db;padding-top:12px;margin-top:8px}'
+    +'.footer-brand{font-family:Barlow Condensed,sans-serif;font-size:8px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#bbb}'
+    +'.footer-brand em{color:#c9a227;font-style:normal}'
+    +'.print-btn{position:fixed;top:1rem;right:1rem;padding:.6rem 1.2rem;background:#c9a227;color:#0f0f0c;border:none;border-radius:8px;font-family:Bebas Neue,sans-serif;font-size:15px;letter-spacing:.08em;cursor:pointer}'
+    +'@media print{.print-btn{display:none}body{padding:24px 28px}}'
+    +'</style></head><body>'
+    +'<button class="print-btn" onclick="document.fonts.ready.then(()=>window.print())">PRINT / PDF</button>'
+
+    // Header
+    +'<div class="hero">'
+    +'<div><div class="brand">MRS<em>™</em></div>'
+    +'<div class="brand-sub">Metabolic Rebuild System™ · Intake Assessment</div></div>'
+    +'<div class="client-block">'
+    +'<div class="client-name">'+c.name+'</div>'
+    +'<div class="client-meta">'+c.avatar+' · '+c.level+' · '+c.freq+'</div>'
+    +'<div class="client-meta" style="color:rgba(255,255,255,.4);margin-top:2px">'+new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})+'</div>'
+    +'</div></div>'
+
+    // Intro framing
+    +'<div style="font-size:13px;color:#555;line-height:1.6;margin-bottom:24px">This is your baseline — where you stand today, and where your <strong style="color:#1a1a1a">'+c.avatar+' '+c.level+'</strong> standard says you should be. Every gap below is the roadmap for the next 8 weeks.</div>'
+
+    // PSS hero
+    +pssHero
+
+    // Performance baseline table
+    +perfSection
+
+    // Rings + avatar path
+    +ringSection
+    +avatarSection
+
+    // Structure
+    +structSection
+
+    // Cardio
+    +cardioSection
+
+    // Quote
+    +'<div class="quote">'
+    +'<div class="quote-text">'+(intakeTaglines[c.avatar]||'Built For The Moment™.')+'</div>'
+    +'<div class="quote-attr">— MRS™ · '+c.avatar+' · Built For The Moment™</div>'
+    +'</div>'
+
+    // Footer
+    +'<div class="footer-bar"><div>'
+    +'<div class="footer-brand"><em>MRS™</em> · Metabolic Rebuild System™ · Built For The Moment™ · Justin Holmes · Coach Use Only</div>'
+    +'<div class="footer-brand" style="margin-top:3px">Generated '+new Date().toLocaleDateString()+'</div>'
+    +'</div></div>'
     +'<script>document.fonts.ready.then(()=>{});<\/script>'
     +'</body></html>';
 
