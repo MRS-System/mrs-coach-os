@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MRS™ Coach OS — Built For The Moment™</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <style>
 :root{
   --black:#080806;--black-2:#0f0f0c;--black-3:#161613;--black-4:#1c1c19;
@@ -305,6 +306,10 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
       <div class="key-status" style="margin-top:6px" onclick="openNRKeyModal()">
         <div class="key-dot inactive" id="nrDot"></div>
         <span>NutriReader Key</span>
+      </div>
+      <div class="key-status" style="margin-top:6px" onclick="openCloudModal()" id="cloudStatus" title="Cloud backup">
+        <div class="key-dot inactive" id="cloudDot"></div>
+        <span id="cloudLabel">Cloud Backup</span>
       </div>
     </div>
   </div>
@@ -691,6 +696,9 @@ function db() {
 function saveDb(data) {
   try {
     localStorage.setItem(DB_KEY, JSON.stringify(data));
+    // Cloud mirror — strictly downstream of a successful local save, and it can
+    // never throw into this path. localStorage remains the source of truth.
+    try { queueCloudMirror(data); } catch(_) {}
   } catch(e) {
     // Loud, never a silent no-op (Fix #4): a swallowed quota error used to make
     // callers believe a save succeeded — including the inbox sweep, which then
@@ -4635,7 +4643,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=38';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=39';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4820,7 +4828,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=38',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=39',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -6631,6 +6639,150 @@ function recomputeWeeklyScores(opts) {
 }
 
 window.addEventListener('load', function(){ try { recomputeWeeklyScores(); } catch(e) { console.error('score migration failed:', e); } });
+
+// ══════════════════════════════════════════════════════════════════
+// CLOUD MIRROR (Supabase Phase 1) — a SECOND COPY, never a dependency.
+// ══════════════════════════════════════════════════════════════════
+// localStorage stays the single source of truth. Every successful local save
+// also pushes a copy to Supabase, debounced. If the network, the login or
+// Supabase itself is down, the app must behave EXACTLY as it does today —
+// no throw, no blocking toast, no interrupted workflow. The only signal is the
+// sidebar dot. Nothing in the OS reads from the cloud in this phase.
+//
+// The URL + anon key are public by design: Row Level Security on coach_backups
+// means the key alone opens nothing (verified: an unauthenticated insert is
+// rejected 401 "violates row-level security policy"). The coach's email and
+// password are NEVER stored by us — supabase-js persists its own session token.
+const SB_URL = 'https://zwmwsgbrstaxelddmfkq.supabase.co';
+const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3bXdzZ2Jyc3RheGVsZGRtZmtxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyMTI5MTYsImV4cCI6MjEwNTc4ODkxNn0.zEzM8K5DCV8EF9PLwuEN14-a3kok2isMaID4XpH4juQ';
+const SB_LAST = 'mrs_cloud_last_v1';
+
+let _sb = null;
+function sbClient() {
+  if (_sb) return _sb;
+  try {
+    if (!window.supabase || !window.supabase.createClient) return null;
+    _sb = window.supabase.createClient(SB_URL, SB_ANON, {
+      auth: { persistSession: true, autoRefreshToken: true, storageKey: 'mrs_sb_auth_v1' }
+    });
+    return _sb;
+  } catch (e) { return null; }
+}
+
+function cloudLastOk() { try { return JSON.parse(localStorage.getItem(SB_LAST) || 'null'); } catch(e) { return null; } }
+function setCloudLast(v) { try { localStorage.setItem(SB_LAST, JSON.stringify(v)); } catch(e) {} }
+
+function setCloudDot(state, label, title) {
+  const dot = document.getElementById('cloudDot');
+  const lab = document.getElementById('cloudLabel');
+  const wrap = document.getElementById('cloudStatus');
+  if (dot) dot.classList.toggle('inactive', state !== 'ok');
+  if (lab) lab.textContent = label;
+  if (wrap) wrap.title = title || '';
+}
+
+function refreshCloudDot() {
+  const last = cloudLastOk();
+  if (!last) { setCloudDot('off', 'Cloud Backup', 'Not connected — tap to sign in'); return; }
+  const mins = Math.round((Date.now() - last.at) / 60000);
+  const when = mins < 1 ? 'just now' : mins < 60 ? mins + 'm ago' : Math.round(mins/60) + 'h ago';
+  setCloudDot(last.ok ? 'ok' : 'off', last.ok ? 'Backed up ' + when : 'Backup failed',
+    (last.ok ? 'Last copy ' + when : 'Last attempt failed ' + when) + (last.clients != null ? ' · ' + last.clients + ' clients' : ''));
+}
+
+// Debounced so a burst of saves (the inbox sweep calls saveDb in a loop) becomes
+// ONE upload rather than a dozen 1.3MB pushes.
+let _mirrorTimer = null, _mirrorPending = null;
+function queueCloudMirror(data) {
+  _mirrorPending = data;
+  if (_mirrorTimer) clearTimeout(_mirrorTimer);
+  _mirrorTimer = setTimeout(function () {
+    const payload = _mirrorPending; _mirrorPending = null; _mirrorTimer = null;
+    mirrorToCloud(payload);
+  }, 3000);
+}
+
+async function mirrorToCloud(data) {
+  try {
+    const sb = sbClient(); if (!sb) return;
+    const { data: sess } = await sb.auth.getSession();
+    if (!sess || !sess.session || !sess.session.user) { setCloudDot('off','Cloud Backup','Not signed in — tap to connect'); return; }
+    const owner = sess.session.user.id;
+    const json = JSON.stringify(data);
+    const row = { owner: owner, data: data, client_count: (data.clients||[]).length,
+                  size_bytes: json.length, updated_at: new Date().toISOString() };
+    const { error } = await sb.from('coach_backups').upsert(row, { onConflict: 'owner' });
+    if (error) throw error;
+    setCloudLast({ ok: true, at: Date.now(), clients: row.client_count, bytes: row.size_bytes });
+  } catch (e) {
+    console.warn('cloud mirror failed (local save is unaffected):', e && e.message ? e.message : e);
+    setCloudLast({ ok: false, at: Date.now() });
+  }
+  refreshCloudDot();
+}
+
+function openCloudModal() {
+  const last = cloudLastOk();
+  const sb = sbClient();
+  const status = !sb ? '<div style="background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.2);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--red)">Supabase library did not load — check your connection and reload.</div>'
+    : last && last.ok ? '<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--green)">Last copy saved ' + new Date(last.at).toLocaleString() + (last.clients!=null?' · '+last.clients+' clients · '+Math.round((last.bytes||0)/1024)+' KB':'') + '</div>'
+    : '<div style="background:rgba(201,162,39,.06);border:1px solid rgba(201,162,39,.15);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--dim-2)">Not connected yet. Sign in once on this device and every save is copied automatically.</div>';
+  document.getElementById('measureModal').innerHTML =
+    '<div style="position:relative;display:flex;flex-direction:column;max-height:88vh;overflow:hidden;border-radius:18px">'
+    + '<div style="padding:1.1rem 1.25rem .75rem;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">'
+    + '<div class="modal-title" style="margin-bottom:0">☁️ Cloud Backup</div>'
+    + '<button class="modal-close" onclick="document.getElementById(\'measureModal\').classList.remove(\'active\')" style="font-size:24px;padding:4px 8px">×</button></div>'
+    + '<div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain">'
+    + '<p style="font-size:12px;color:var(--dim-2);line-height:1.7;margin-bottom:1rem">Sign in once on this device. After that, every save is copied to your private cloud table automatically. Your Coach OS keeps working normally even if the backup fails.</p>'
+    + status
+    + '<div class="form-field" style="margin-bottom:.75rem"><div class="form-label">Email</div><input type="email" id="sbEmail" placeholder="you@email.com" style="width:100%"></div>'
+    + '<div class="form-field" style="margin-bottom:1rem"><div class="form-label">Password</div><input type="password" id="sbPass" placeholder="••••••••" style="width:100%"></div>'
+    + '<div id="sbMsg" style="font-size:12px;color:var(--dim);margin-bottom:10px"></div>'
+    + '<button onclick="cloudSignIn()" style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer">Connect</button>'
+    + '<button onclick="cloudBackupNow()" style="width:100%;padding:11px;margin-top:8px;background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;color:var(--dim-2);font-family:Barlow Condensed,sans-serif;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:pointer">Back Up Now</button>'
+    + '<button onclick="cloudSignOut()" style="width:100%;padding:9px;margin-top:8px;background:none;border:none;color:var(--dim);font-size:11px;cursor:pointer">Sign out of this device</button>'
+    + '</div></div>';
+  document.getElementById('measureModal').classList.add('active');
+}
+
+async function cloudSignIn() {
+  const msg = document.getElementById('sbMsg');
+  const email = (document.getElementById('sbEmail')||{}).value || '';
+  const pass  = (document.getElementById('sbPass')||{}).value || '';
+  if (!email || !pass) { if(msg){msg.textContent='Enter your email and password.';msg.style.color='var(--red)';} return; }
+  const sb = sbClient(); if (!sb) { if(msg){msg.textContent='Supabase library not loaded.';msg.style.color='var(--red)';} return; }
+  if (msg) { msg.textContent = 'Connecting…'; msg.style.color = 'var(--dim)'; }
+  try {
+    const { error } = await sb.auth.signInWithPassword({ email: email.trim(), password: pass });
+    if (error) throw error;
+    if (msg) { msg.textContent = 'Connected ✓ — backing up now…'; msg.style.color = 'var(--green-br)'; }
+    await mirrorToCloud(db());
+    const last = cloudLastOk();
+    if (msg) { msg.textContent = last && last.ok ? 'Backed up ✓ ' + last.clients + ' clients saved to the cloud.' : 'Signed in, but the backup failed — check the table exists.';
+               msg.style.color = last && last.ok ? 'var(--green-br)' : 'var(--red)'; }
+  } catch (e) {
+    if (msg) { msg.textContent = 'Could not connect: ' + (e && e.message ? e.message : 'unknown error'); msg.style.color = 'var(--red)'; }
+    setCloudLast({ ok:false, at:Date.now() }); refreshCloudDot();
+  }
+}
+
+async function cloudBackupNow() {
+  const msg = document.getElementById('sbMsg');
+  if (msg) { msg.textContent = 'Backing up…'; msg.style.color = 'var(--dim)'; }
+  await mirrorToCloud(db());
+  const last = cloudLastOk();
+  if (msg) { msg.textContent = last && last.ok ? 'Backed up ✓ ' + last.clients + ' clients · ' + Math.round((last.bytes||0)/1024) + ' KB'
+                                               : 'Backup failed — are you signed in?';
+             msg.style.color = last && last.ok ? 'var(--green-br)' : 'var(--red)'; }
+}
+
+async function cloudSignOut() {
+  try { const sb = sbClient(); if (sb) await sb.auth.signOut(); } catch(e) {}
+  setCloudLast(null); try { localStorage.removeItem(SB_LAST); } catch(e) {}
+  refreshCloudDot(); toast('Signed out of cloud backup');
+}
+
+window.addEventListener('load', function(){ try { refreshCloudDot(); } catch(e) {} });
 
 window.addEventListener('load', init);
 </script>
