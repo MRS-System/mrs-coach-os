@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=36 -->
+<!-- portal cache-buster v=37 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1686,7 +1686,7 @@ input[type=range]::-moz-range-thumb {
           </svg>
           <div class="score-ring-text">
             <div class="score-big" id="scoreBig">0</div>
-            <div class="score-denom">out of 49</div>
+            <div class="score-denom">out of 35</div>
           </div>
         </div>
         <div id="scoreMessage" style="font-size:13px;color:var(--dim);text-align:center;max-width:240px;line-height:1.6"></div>
@@ -1733,7 +1733,7 @@ input[type=range]::-moz-range-thumb {
         <div class="week-score-preview">
           <div>
             <div class="wsp-label">This Week's Score</div>
-            <div class="wsp-denom">out of 49</div>
+            <div class="wsp-denom">out of 35</div>
           </div>
           <div class="wsp-score" id="coachTabScore">—</div>
         </div>
@@ -1928,7 +1928,7 @@ input[type=range]::-moz-range-thumb {
   <div class="sunday-icon">📤</div>
   <div class="sunday-title">Week Complete</div>
   <div class="sunday-score" id="sundayScore">—</div>
-  <div class="sunday-denom">out of 49</div>
+  <div class="sunday-denom">out of 35</div>
   <div class="sunday-body">Your week is done. Your coach is waiting for this.<br>One tap sends it.</div>
   <button class="sunday-send-btn" onclick="sundaySend()">Send My Week →</button>
   <div class="sunday-skip" onclick="sundaySkip()">Skip for now</div>
@@ -1940,7 +1940,7 @@ input[type=range]::-moz-range-thumb {
 
 const COACH_DB_KEY = 'mrs_coach_os_v1';
 const CLIENT_DB_KEY = 'mrs_client_portal_v1';
-const STREAK_THRESHOLD = 35;
+const STREAK_THRESHOLD = 25;
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -2183,6 +2183,23 @@ function calcWeekScore(offset=0){
     if(ci.stress!=null){stressSum+=ci.stress;stressDays++;}
   });
   const clamp=v=>Math.max(0,Math.min(7,Math.round(v)));
+  // Workouts now count the REAL record: a program-tab session logged inside this
+  // week (slot data or marked done) counts, not just the daily yes/no toggle.
+  // Either path earns credit — max(), never both — so nobody loses what they had.
+  const dayKeys=new Set(days.map(d=>d.key));
+  const inWeek=ts=>{ if(!ts)return false; const d=new Date(ts);
+    return dayKeys.has(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); };
+  const sessionsThisWeek=new Set();
+  Object.entries(pdb.slotChecks||{}).forEach(([sessId,checks])=>{
+    if(!checks)return;
+    let hit=inWeek(checks._doneAt);
+    if(!hit) Object.entries(checks).forEach(([k,v])=>{
+      if(k.endsWith('_log')&&v&&v.ts&&(v.weight||v.reps||v.rpe||v.sets)&&inWeek(v.ts))hit=true;
+    });
+    if(hit)sessionsThisWeek.add(sessId);
+  });
+  const sessionWorkouts=sessionsThisWeek.size;
+  workouts=Math.max(workouts,sessionWorkouts);
   const workoutScore=freq>0?Math.min(7,Math.round((workouts/freq)*7)):0;
   // Quality categories are GATED by days actually logged (× loggedDays/7) so ONE
   // good day can't approach 7/7 — the /49 total now reflects consistency, not a
@@ -2191,37 +2208,45 @@ function calcWeekScore(offset=0){
   const energyScore=energyDays>0?clamp((energySum/energyDays/10)*7*(energyDays/7)):0;
   const sleepScore =sleepDays>0 ?clamp((sleepSum/sleepDays/10)*7*(sleepDays/7)):0;
   const stressScore=stressDays>0?clamp(((10-stressSum/stressDays)/10)*7*(stressDays/7)):0;
+  // WELLNESS — energy/sleep/stress collapse into ONE 0-7 leg. Scored separately
+  // they triple-penalised a single skipped day (three gates, one omission).
+  // Average only the legs the client actually logged.
+  const wellParts=[];
+  if(energyDays>0)wellParts.push((energySum/energyDays/10)*7*(energyDays/7));
+  if(sleepDays>0) wellParts.push((sleepSum/sleepDays/10)*7*(sleepDays/7));
+  if(stressDays>0)wellParts.push(((10-stressSum/stressDays)/10)*7*(stressDays/7));
+  const wellnessScore=wellParts.length?clamp(wellParts.reduce((a,b)=>a+b,0)/wellParts.length):0;
   const wk=weekKey(offset);
   const nutritionRaw=pdb.weekScores?.[wk]?.nutrition||0;
   const nutritionScore=nutritionRaw>0?clamp((nutritionRaw/10)*7*(daysLogged/7)):0;
-  const total=protein+water+workoutScore+energyScore+sleepScore+stressScore+nutritionScore;
-  return{protein,water,workoutScore,energyScore,sleepScore,stressScore,nutritionScore,total,workouts,freq,dayCount:daysLogged};
+  // /35 = 5 legs x 7. energy/sleep/stress still returned for diagnostics but no
+  // longer scored individually — wellnessScore is the leg that counts.
+  const total=protein+water+workoutScore+wellnessScore+nutritionScore;
+  return{protein,water,workoutScore,wellnessScore,energyScore,sleepScore,stressScore,nutritionScore,total,workouts,sessionWorkouts,freq,dayCount:daysLogged,scoreVersion:2,scoreMax:35};
 }
 
 function renderScore(){
   const scores=calcWeekScore(),pdb=portalDb(),wk=weekKey();
   const days=getWeekDays();
   document.getElementById('scoreWeekLabel').textContent=`${days[0].key.slice(5).replace('-','/')} \u2192 ${days[6].key.slice(5).replace('-','/')}`;
-  const pct=scores.total/49,circ=427.26,offset=circ-(pct*circ);
+  const pct=scores.total/35,circ=427.26,offset=circ-(pct*circ);
   const ring=document.getElementById('scoreRingFill');
   ring.style.strokeDashoffset=offset;
-  ring.className='score-ring-fill '+(scores.total>=STREAK_THRESHOLD?'great':scores.total>=28?'ok':'low');
+  ring.className='score-ring-fill '+(scores.total>=STREAK_THRESHOLD?'great':scores.total>=20?'ok':'low');
   document.getElementById('scoreBig').textContent=scores.total;
   let msg='';
-  if(scores.total>=45)msg='Elite week. The Standard is showing.';
+  if(scores.total>=32)msg='Elite week. The Standard is showing.';
   else if(scores.total>=STREAK_THRESHOLD)msg='Streak protected. Keep building.';
-  else if(scores.total>=28)msg=`${STREAK_THRESHOLD-scores.total} more points protects your streak.`;
+  else if(scores.total>=20)msg=`${STREAK_THRESHOLD-scores.total} more points protects your streak.`;
   else msg='The week is not over. Every check-in counts.';
   document.getElementById('scoreMessage').textContent=msg;
   document.getElementById('streakNum').textContent=pdb.streak||0;
-  document.getElementById('streakSub').textContent=pdb.streak>0?`${pdb.streak} week${pdb.streak!==1?'s':''} above the standard`:'Hit 35+ this week to start your streak';
+  document.getElementById('streakSub').textContent=pdb.streak>0?`${pdb.streak} week${pdb.streak!==1?'s':''} above the standard`:'Hit 25+ this week to start your streak';
   const rows=[
     {icon:'\ud83e\udd69',label:'Protein',score:scores.protein,max:7},
     {icon:'\ud83d\udca7',label:'Water',score:scores.water,max:7},
     {icon:'\ud83c\udfcb\ufe0f',label:'Workouts',score:scores.workoutScore,max:7},
-    {icon:'\u26a1',label:'Energy',score:scores.energyScore,max:7},
-    {icon:'\ud83d\ude34',label:'Sleep',score:scores.sleepScore,max:7},
-    {icon:'\ud83e\udde0',label:'Stress',score:scores.stressScore,max:7},
+    {icon:'\u26a1',label:'Wellness',score:scores.wellnessScore,max:7},
     {icon:'\ud83e\udd57',label:'Nutrition',score:scores.nutritionScore,max:7},
   ];
   document.getElementById('breakdownRows').innerHTML=rows.map(r=>`<div class="breakdown-row">
@@ -2240,7 +2265,7 @@ function updateNutritionScore(){
   const nGate=(scores.dayCount||0)/7;
   const nutritionScore=Math.max(0,Math.min(7,Math.round((val/10)*7*nGate)));
   const projected=scores.total-scores.nutritionScore+nutritionScore;
-  const offset=427.26-(projected/49*427.26);
+  const offset=427.26-(projected/35*427.26);
   document.getElementById('scoreRingFill').style.strokeDashoffset=offset;
   document.getElementById('scoreBig').textContent=projected;
 }
@@ -3570,18 +3595,28 @@ function buildWeeklyPayload(offset=0) {
     if (!ci || ci.workout !== 'yes') return null;
     return {date:d.key, week:ci.workoutWeek, session:ci.workoutSession, rpe:ci.workoutRPE, lift:ci.workoutLift||''};
   }).filter(Boolean);
+  // Slot logs are WEEK-FILTERED by timestamp. Previously every payload re-sent
+  // the client's entire slotChecks history, so one week's send carried months of
+  // old sessions — inflating compliance, repeating points on the overload charts
+  // and bloating storage. Only entries stamped inside this week travel now.
+  const dayKeySet = new Set(days.map(d => d.key));
+  const tsInWeek = ts => { if (!ts) return false; const dt = new Date(ts);
+    return dayKeySet.has(`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`); };
   const slotLogs = {};
   if (pdb.slotChecks) {
     Object.entries(pdb.slotChecks).forEach(([sessId, checks]) => {
+      if (!checks) return;
       const logs = {};
       Object.entries(checks).forEach(([key, val]) => {
-        if (key.endsWith('_log') && val && (val.weight || val.reps || val.rpe || val.sets)) {
+        if (key.endsWith('_log') && val && (val.weight || val.reps || val.rpe || val.sets) && tsInWeek(val.ts)) {
           logs[key.replace('_log','')] = {weight:val.weight, reps:val.reps, unit:val.unit||'lbs', rpe:val.rpe||'', sets:val.sets||'', ts:val.ts, note:(val.note||'')};
         }
       });
-      // Forward the mark-done marker too (attendance), so a session marked done
-      // with no slot inputs still travels to the coach for compliance.
-      if (checks._sessionDone === true) logs._sessionDone = true;
+      // Attendance: a session marked done travels even with no slot inputs, but
+      // only if it was marked done THIS week. _doneAt now rides along so the
+      // coach can date it (it was previously written but dropped in transit).
+      const doneThisWeek = checks._sessionDone === true && tsInWeek(checks._doneAt);
+      if (doneThisWeek) { logs._sessionDone = true; logs._doneAt = checks._doneAt; }
       if (Object.keys(logs).length) slotLogs[sessId] = logs;
     });
   }

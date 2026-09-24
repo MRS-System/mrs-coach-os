@@ -4635,7 +4635,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=36';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=37';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4820,7 +4820,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=36',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=37',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5006,7 +5006,7 @@ function buildCheckinsPanel(c) {
         <div style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span style="font-weight:700;font-size:13px;color:var(--white)">${programWeekLabel(c, w.weekKey)}</span>
-            <span style="font-family:Bebas Neue,sans-serif;font-size:16px;color:var(--gold);letter-spacing:.04em">${w.weekScore || 0}<span style="font-size:10px;color:var(--dim)">/49</span></span>
+            <span style="font-family:Bebas Neue,sans-serif;font-size:16px;color:var(--gold);letter-spacing:.04em">${w.weekScore || 0}<span style="font-size:10px;color:var(--dim)">/35</span></span>
             <span style="font-size:11px;color:var(--dim-2)">${sessions}${freq ? '/' + freq : ''} session${sessions !== 1 ? 's' : ''}</span>
           </div>
           <div style="font-size:10px;color:var(--dim);margin-top:2px">Received ${recv} · 🔥 ${w.streak || 0} wk streak</div>
@@ -5252,7 +5252,7 @@ function buildTrendsSection(c) {
   // WEEKLY SCORE TREND
   const scorePts = weeks.map(w => ({val:w.weekScore||0, label:'W'+w.weekKey.slice(-2).replace('-','')}));
   html += '<div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;margin-top:.5rem">Coaching Charts</div>';
-  html += miniChart('Weekly Score (out of 49)', scorePts, 'var(--gold)', '', false, [{val:35, color:'var(--green-br)', label:'35'}]);
+  html += miniChart('Weekly Score (out of 35)', scorePts, 'var(--gold)', '', false, [{val:25, color:'var(--green-br)', label:'25'}]);
 
   // PROTEIN HIT RATE
   const proteinPts = weeks.map(w => {
@@ -5348,9 +5348,9 @@ function buildTrendsSection(c) {
     ]);
   }
 
-  // Adherence — weekly scores as % of 49
+  // Adherence — weekly scores as % of 35
   const adherencePts = weeks.map(w => ({
-    val: Math.round((w.weekScore||0)/49*100),
+    val: Math.round((w.weekScore||0)/35*100),
     label: 'W'+w.weekKey.slice(-2).replace('-','')
   }));
   if (adherencePts.length >= 2) {
@@ -6543,6 +6543,98 @@ function renderAnalytics() {
     +avStats.map(a=>'<div style="display:flex;align-items:center;gap:10px;padding:.5rem .6rem;background:var(--black-4);border-radius:8px;margin-bottom:6px"><div style="font-size:12px;font-weight:700;color:var(--white);min-width:110px">'+a.av+'</div><div style="font-size:11px;color:var(--dim)">'+a.count+' client'+(a.count!==1?'s':'')+'</div><div style="flex:1;height:4px;background:var(--black-2);border-radius:2px;overflow:hidden"><div style="height:100%;width:'+a.compRate+'%;background:'+(a.compRate>=70?'var(--green-br)':'var(--gold)')+';border-radius:2px"></div></div><div style="font-size:11px;font-weight:700;color:'+(a.compRate>=70?'var(--green-br)':'var(--gold)')+';min-width:40px;text-align:right">'+a.compRate+'%</div><div style="font-size:9px;color:var(--dim)">completion</div></div>').join('')
     +'</div>':'');
 }
+
+// ══════════════════════════════════════════════════════════════════
+// SCORE MIGRATION — recompute stored weeks under the /35 rules (scoreVersion 2)
+// ══════════════════════════════════════════════════════════════════
+// Historic weeks were scored /49 AND under the workout bug (workouts counted only
+// the daily yes/no toggle, never the program-tab slot logs), so a client who
+// logged every slot scored ~0. Recompute from the raw checkins + slotLogs already
+// stored on each week. Idempotent: guarded by scoreBreakdown.scoreVersion, so it
+// runs once per week-record and is a no-op afterwards. Never edits measurements.
+function recomputeWeekRecord(w, freqFallback) {
+  const b = w.scoreBreakdown || {};
+  const clamp = v => Math.max(0, Math.min(7, Math.round(v)));
+  // The week's seven day keys, derived from the calendar-Sunday weekKey.
+  const dm = /^week-(\d{4})-(\d{2})-(\d{2})$/.exec(w.weekKey || '');
+  const dayKeys = new Set();
+  if (dm) {
+    const sun = new Date(+dm[1], +dm[2]-1, +dm[3]);
+    for (let i=0;i<7;i++){ const d=new Date(sun); d.setDate(sun.getDate()+i);
+      dayKeys.add(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); }
+  }
+  const inWeek = ts => { if(!ts||!dayKeys.size) return false; const d=new Date(ts);
+    return dayKeys.has(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); };
+
+  // Protein / water are day counts (0-7) — unchanged by the rescale.
+  let protein=0, water=0, toggleWorkouts=0;
+  let eSum=0,eN=0,sSum=0,sN=0,stSum=0,stN=0,daysLogged=0;
+  Object.values(w.checkins||{}).forEach(ci=>{
+    if(!ci) return;
+    const any=(ci.protein===true||ci.protein==='yes')||(ci.water===true||ci.water==='yes')
+      ||(ci.workout==='yes'||ci.workout===true)||ci.energy!=null||ci.sleep!=null||ci.stress!=null
+      ||(ci.meals&&ci.meals.length)||(ci.barcodeItems&&ci.barcodeItems.length);
+    if(any)daysLogged++;
+    if(ci.protein===true||ci.protein==='yes')protein++;
+    if(ci.water===true||ci.water==='yes')water++;
+    if(ci.workout==='yes'||ci.workout===true)toggleWorkouts++;
+    if(ci.energy!=null){eSum+=ci.energy;eN++;}
+    if(ci.sleep!=null){sSum+=ci.sleep;sN++;}
+    if(ci.stress!=null){stSum+=ci.stress;stN++;}
+  });
+
+  // THE FIX: count real sessions logged inside this week.
+  const sess=new Set();
+  Object.entries(w.slotLogs||{}).forEach(([sid,logs])=>{
+    if(!logs) return;
+    let hit=inWeek(logs._doneAt);
+    if(!hit) Object.entries(logs).forEach(([k,v])=>{
+      if(k.startsWith('_')) return;
+      if(v&&v.ts&&(v.weight||v.reps||v.rpe||v.sets)&&inWeek(v.ts))hit=true;
+    });
+    if(hit)sess.add(sid);
+  });
+  const freq = b.freq || freqFallback || 3;
+  const workouts = Math.max(toggleWorkouts, sess.size);
+  const workoutScore = freq>0 ? Math.min(7, Math.round((workouts/freq)*7)) : 0;
+
+  const wp=[];
+  if(eN>0) wp.push((eSum/eN/10)*7*(eN/7));
+  if(sN>0) wp.push((sSum/sN/10)*7*(sN/7));
+  if(stN>0)wp.push(((10-stSum/stN)/10)*7*(stN/7));
+  const wellnessScore = wp.length ? clamp(wp.reduce((a,b2)=>a+b2,0)/wp.length) : 0;
+
+  // Nutrition: the raw 1-10 slider never travels, only its computed 0-7 leg —
+  // which is unchanged by the rescale, so carry it forward as-is.
+  const nutritionScore = b.nutritionScore || 0;
+  const total = protein + water + workoutScore + wellnessScore + nutritionScore;
+  return {protein, water, workoutScore, wellnessScore,
+          energyScore:b.energyScore||0, sleepScore:b.sleepScore||0, stressScore:b.stressScore||0,
+          nutritionScore, total, workouts, sessionWorkouts:sess.size, freq,
+          dayCount:daysLogged, scoreVersion:2, scoreMax:35};
+}
+
+function recomputeWeeklyScores(opts) {
+  const dry = !!(opts && opts.dryRun);
+  const data = db();
+  const report = [];
+  let changed = 0;
+  (data.clients||[]).forEach(c => {
+    (c.weeklyData||[]).forEach(w => {
+      if ((w.scoreBreakdown||{}).scoreVersion === 2) return;
+      const before = w.weekScore || 0;
+      const nb = recomputeWeekRecord(w, c.freq==='2x/week'?2:c.freq==='4x/week'?4:3);
+      report.push({client:c.name, week:w.weekKey, before, after:nb.total,
+                   oldWorkouts:(w.scoreBreakdown||{}).workouts||0, newWorkouts:nb.workouts});
+      if (!dry) { w.scoreBreakdown = nb; w.weekScore = nb.total; }
+      changed++;
+    });
+  });
+  if (!dry && changed) { saveDb(data); console.log('Score migration: recomputed '+changed+' week(s) to /35.'); }
+  return {changed, report};
+}
+
+window.addEventListener('load', function(){ try { recomputeWeeklyScores(); } catch(e) { console.error('score migration failed:', e); } });
 
 window.addEventListener('load', init);
 </script>
