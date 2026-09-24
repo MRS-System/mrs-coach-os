@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=42 -->
+<!-- portal cache-buster v=43 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2736,7 +2736,7 @@ function goTab(screen,tabId){
   document.getElementById(tabId).classList.add('active');
   if(screen==='score')renderScore();
   if(screen==='progress')renderProgress();
-  if(screen==='program'){renderProgram();renderCorrectiveBlock();enhanceFinisherSlots();renderUnloggedPastSessionNudge();}
+  if(screen==='program'){renderProgram();renderCorrectiveBlock();enhanceFinisherSlots();enhanceSlotCapture();renderUnloggedPastSessionNudge();}
   if(screen==='coach')renderCoachTab();
 }
 
@@ -2771,7 +2771,7 @@ function loadProfileFromCode() {
     var el = document.getElementById('profileCodeInput'); if(el) el.value = '';
     var hn = document.getElementById('hdrName'); if(hn) hn.textContent = client.name;
     var ha = document.getElementById('hdrAvatar'); if(ha) ha.textContent = client.avatar + ' · ' + (client.cohort||'1-on-1');
-    renderProfileStatus(); renderProgress(); renderProgram(); renderCorrectiveBlock(); enhanceFinisherSlots(); renderUnloggedPastSessionNudge(); renderCoachTab();
+    renderProfileStatus(); renderProgress(); renderProgram(); renderCorrectiveBlock(); enhanceFinisherSlots(); enhanceSlotCapture(); renderUnloggedPastSessionNudge(); renderCoachTab();
     showToast('Welcome ' + client.name + '! Profile loaded');
   } catch(e) { showToast('Could not read code. Ask your coach to copy it again.'); }
 }
@@ -3456,8 +3456,32 @@ function saveSlotLog(sessionId, slotKey, el) {
   const unit = unitEl ? unitEl.value : 'lbs';
   const rpe = rpeEl ? rpeEl.value : '';
   const sets = setsEl ? setsEl.value : '';
-  if (weight || reps || rpe || sets) {
-    pdb.slotChecks[sessionId][slotKey + '_log'] = {weight, reps, unit, rpe, sets, ts: Date.now()};
+  // Capture fields injected by enhanceSlotCapture (a non-protected sibling —
+  // renderProgram is protected and is never edited). Absent on old cards, so
+  // everything below degrades to the previous behaviour.
+  const g = id => document.getElementById(id + '-' + sessionId + '-' + slotKey);
+  const modeEl = g('slm'), sideEl = g('slp'), exEl = g('slx'), noteEl = g('sln');
+  const modEl = g('slmod'), painEl = g('slpain');
+  const mode = modeEl ? modeEl.value : '';
+  const perSide = sideEl ? !!sideEl.checked : false;
+  const exercise = exEl ? exEl.value.trim() : '';
+  const note = noteEl ? noteEl.value.trim() : '';
+  const modified = modEl ? modEl.getAttribute('data-on') === '1' : false;
+  const pain = painEl ? painEl.getAttribute('data-on') === '1' : false;
+  // TOTAL LOAD — dumbbells entered per hand are doubled, so 70s becomes 140 and
+  // a barbell-to-dumbbell switch stops reading as a collapse on the chart.
+  const wNum = parseFloat(weight);
+  const totalLoad = (!isNaN(wNum) && wNum > 0) ? (perSide ? wNum * 2 : wNum) : null;
+  // A pain report or a swap with NO numbers used to be silently discarded by
+  // the old `if (weight||reps||rpe||sets)` guard — the single most important
+  // thing a client can tell the coach was the one thing thrown away.
+  if (weight || reps || rpe || sets || exercise || note || modified || pain) {
+    const prevLog = pdb.slotChecks[sessionId][slotKey + '_log'] || {};
+    pdb.slotChecks[sessionId][slotKey + '_log'] = {
+      weight, reps, unit, rpe, sets, ts: Date.now(),
+      mode, perSide, totalLoad, exercise, note, modified, pain,
+      prescribed: prevLog.prescribed || (exEl ? exEl.getAttribute('data-prescribed') || '' : '')
+    };
     savePortalDb(pdb);
     deliverCurrentWeek(); // Fix #2: push the in-progress week to the coach now
   }
@@ -3575,6 +3599,94 @@ function enhanceFinisherSlots() {
 // if a PAST program week (< current) has a session with NEITHER a slot log NOR a
 // mark-done marker, surface a small card prompting the client to open and mark
 // it done — late still counts. Client-facing only; never inside renderProgram.
+// ── SLOT CAPTURE (Path B sibling) ──────────────────────────────────────
+// renderProgram and parseSlots are PROTECTED and are never edited. This runs
+// AFTER render, finds each slot card by an input renderProgram already emitted,
+// and appends the modality / substitution / note controls — the same pattern
+// enhanceFinisherSlots uses. saveSlotLog (not protected) reads them.
+const SLOT_MODES = ['', 'Barbell', 'Dumbbell', 'Bodyweight', 'Machine', 'Cable', 'Kettlebell', 'Band', 'Other'];
+
+function enhanceSlotCapture() {
+  const cards = document.querySelectorAll('#programContent .prog-slot-card');
+  cards.forEach(function (card) {
+    if (card.dataset.captureEnhanced === '1') return;
+    const badge = card.querySelector('.prog-slot-badge');
+    // Finisher (F) has its own note/RPE treatment via enhanceFinisherSlots.
+    if (badge && badge.textContent.trim().toUpperCase() === 'F') return;
+    const probe = card.querySelector('input[id^="slw-"]');
+    if (!probe) return;
+    const rest = probe.id.slice(4);
+    const cut = rest.lastIndexOf('-');
+    if (cut < 0) return;
+    const sessionId = rest.slice(0, cut), slotKey = rest.slice(cut + 1);
+    const pdb = portalDb();
+    const log = (pdb.slotChecks && pdb.slotChecks[sessionId] && pdb.slotChecks[sessionId][slotKey + '_log']) || {};
+    // The prescribed movement, read off the card renderProgram already drew.
+    const nameEl = card.querySelector('.prog-slot-exercise');
+    const prescribed = nameEl ? nameEl.textContent.trim() : '';
+
+    const id = pre => pre + '-' + sessionId + '-' + slotKey;
+    const row1 = document.createElement('div');
+    row1.className = 'slot-log-row';
+    row1.innerHTML =
+      '<span class="slot-log-group" style="flex:1"><span class="slot-log-label">How</span>'
+      + '<select class="slot-log-input" id="' + id('slm') + '">'
+      + SLOT_MODES.map(function (m) { return '<option value="' + m + '">' + (m || 'Select…') + '</option>'; }).join('')
+      + '</select></span>'
+      + '<span class="slot-log-group" style="flex:0 0 96px"><span class="slot-log-label">Per hand</span>'
+      + '<label style="display:flex;align-items:center;gap:6px;height:34px;font-size:12px;color:var(--dim2)">'
+      + '<input type="checkbox" id="' + id('slp') + '" style="width:16px;height:16px;accent-color:var(--gold)"><span>each</span></label></span>';
+    card.appendChild(row1);
+
+    const row2 = document.createElement('div');
+    row2.className = 'slot-log-row';
+    row2.innerHTML =
+      '<span class="slot-log-group" style="flex:1"><span class="slot-log-label">Swapped for</span>'
+      + '<input class="slot-log-input" type="text" id="' + id('slx') + '" placeholder="only if you did something else"></span>';
+    card.appendChild(row2);
+
+    const row3 = document.createElement('div');
+    row3.className = 'slot-log-row';
+    row3.innerHTML =
+      '<span class="slot-log-group" style="flex:1"><span class="slot-log-label">Note</span>'
+      + '<input class="slot-log-input" type="text" id="' + id('sln') + '" placeholder="anything your coach should know"></span>'
+      + '<span class="slot-log-group" style="flex:0 0 auto"><span class="slot-log-label">&nbsp;</span>'
+      + '<span style="display:flex;gap:6px">'
+      + '<button type="button" id="' + id('slmod') + '" data-on="0" style="height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--dim2);font-size:12px;cursor:pointer">Modified</button>'
+      + '<button type="button" id="' + id('slpain') + '" data-on="0" style="height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--dim2);font-size:12px;cursor:pointer">Pain</button>'
+      + '</span></span>';
+    card.appendChild(row3);
+
+    const modeEl = document.getElementById(id('slm'));
+    const sideEl = document.getElementById(id('slp'));
+    const exEl   = document.getElementById(id('slx'));
+    const noteEl = document.getElementById(id('sln'));
+    const modBtn = document.getElementById(id('slmod'));
+    const painBtn= document.getElementById(id('slpain'));
+    // Values set via properties, never innerHTML — free text can't break markup.
+    if (modeEl) modeEl.value = log.mode || '';
+    if (sideEl) sideEl.checked = !!log.perSide;
+    if (exEl) { exEl.value = log.exercise || ''; exEl.setAttribute('data-prescribed', prescribed); }
+    if (noteEl) noteEl.value = log.note || '';
+    const paint = function (btn, on, col) {
+      btn.setAttribute('data-on', on ? '1' : '0');
+      btn.style.background = on ? col.bg : 'transparent';
+      btn.style.color = on ? col.fg : 'var(--dim2)';
+      btn.style.borderColor = on ? col.fg : 'var(--border)';
+    };
+    const MOD = { bg: 'rgba(201,162,39,.14)', fg: 'var(--gold)' };
+    const PAIN = { bg: 'rgba(220,38,38,.14)', fg: 'var(--red)' };
+    if (modBtn)  { paint(modBtn, !!log.modified, MOD);
+      modBtn.addEventListener('click', function(){ paint(modBtn, modBtn.getAttribute('data-on') !== '1', MOD); saveSlotLog(sessionId, slotKey, modBtn); }); }
+    if (painBtn) { paint(painBtn, !!log.pain, PAIN);
+      painBtn.addEventListener('click', function(){ paint(painBtn, painBtn.getAttribute('data-on') !== '1', PAIN); saveSlotLog(sessionId, slotKey, painBtn); }); }
+    [modeEl, sideEl, exEl, noteEl].forEach(function (el) {
+      if (el) el.addEventListener('change', function(){ saveSlotLog(sessionId, slotKey, el); });
+    });
+    card.dataset.captureEnhanced = '1';
+  });
+}
+
 function renderUnloggedPastSessionNudge() {
   const el = document.getElementById('programContent');
   if (!el || !client) return;
