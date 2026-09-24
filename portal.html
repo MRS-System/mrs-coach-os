@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=41 -->
+<!-- portal cache-buster v=42 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2309,21 +2309,18 @@ function checkStreak(){
 // \u2500\u2500 Progress \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function renderProgress(){
   const el=document.getElementById('progressContent');
-  if(!client){el.innerHTML=`<div class="no-client"><div class="no-client-icon">\ud83d\udcca</div><div class="no-client-title">No Data Yet</div><div class="no-client-sub">Open the link your coach sent you to see your progress.</div></div>`;return;}
-  // The Coach OS stores measurements as an OBJECT keyed by checkpoint
-  // ({intake,week4,week8}); tolerate a legacy array-of-records-with-.checkpoint
-  // too so an old-shape profile never throws here (ms.find on an object threw,
-  // breaking the whole guarded load chain — program included).
+  if(!client){el.innerHTML=`<div class="no-client"><div class="no-client-icon">📊</div><div class="no-client-title">No Data Yet</div><div class="no-client-sub">Open the link your coach sent you to see your progress.</div></div>`;return;}
+  // Coach OS stores measurements as an OBJECT keyed by checkpoint; tolerate the
+  // legacy array-of-records shape so an old profile never throws here.
   const msRaw=client.measurements;
   const cp=Array.isArray(msRaw)
     ? { intake: msRaw.find(function(m){return m&&m.checkpoint==='intake';})||msRaw[0]||null,
         week4:  msRaw.find(function(m){return m&&m.checkpoint==='week4';})||null,
         week8:  msRaw.find(function(m){return m&&m.checkpoint==='week8';})||null }
     : (msRaw&&typeof msRaw==='object' ? msRaw : {});
-  const intake=cp.intake||null;
-  const wk4=cp.week4||null;
-  const wk8=cp.week8||null;
+  const intake=cp.intake||null, wk4=cp.week4||null, wk8=cp.week8||null;
   const latest=wk8||wk4||intake;
+  const latestLabel=wk8?'Week 8':wk4?'Week 4':'Intake';
   const MRS_STANDARDS={
     Builder:{Beginner:{kbdl:10,pushups:8,plank:30,row:200},Intermediate:{kbdl:15,pushups:12,plank:50,row:185},Advanced:{kbdl:20,pushups:15,plank:70,row:170}},
     Comeback:{Beginner:{kbdl:20,pushups:10,plank:75,row:160},Intermediate:{kbdl:28,pushups:16,plank:105,row:148},Advanced:{kbdl:35,pushups:22,plank:135,row:138}},
@@ -2333,35 +2330,130 @@ function renderProgress(){
     Apex:{Beginner:{kbdl:38,pushups:35,plank:180,row:115},Intermediate:{kbdl:44,pushups:42,plank:210,row:108},Advanced:{kbdl:50,pushups:50,plank:240,row:100}},
   };
   const std=MRS_STANDARDS[client.avatar]?.[client.level]||null;
-  function v(rec,f){const val=rec?.[f];return val!=null&&val!==''&&val!=='\u2014'?parseFloat(val):null;}
-  function metricCard(label,iV,w4V,w8V,higherBetter,unit,target){
-    const now=w8V??w4V??iV;const change=iV&&now!=null?now-iV:null;
-    const changeGood=higherBetter?change>0:change<0;
-    const changeStr=change!=null?`${change>0?'+':''}${typeof change==='number'?change.toFixed(1):change}${unit}`:'\u2014';
-    let barPct=0,barDone=false;
-    if(target&&iV!=null&&now!=null){barPct=higherBetter?Math.min(100,Math.round((now/target)*100)):Math.min(100,Math.round(((iV-now+target)/iV)*100));barDone=higherBetter?now>=target:now<=target;}
-    return`<div class="metric-card"><div class="metric-name">${label}</div>
-    <div class="metric-row">
-      <div class="metric-val-wrap"><div class="metric-checkpoint">Intake</div><div class="metric-val">${iV!=null?iV+unit:'\u2014'}</div></div>
-      <div class="metric-val-wrap"><div class="metric-checkpoint">Week 4</div><div class="metric-val">${w4V!=null?w4V+unit:'\u2014'}</div></div>
-      <div class="metric-val-wrap"><div class="metric-checkpoint">Week 8</div><div class="metric-val highlight">${w8V!=null?w8V+unit:'\u2014'}</div></div>
-    </div>
-    ${change!=null?`<div class="metric-change ${changeGood?'good':'bad'}">${changeGood?'\u2191':'\u2193'} ${changeStr} from intake</div>`:''}
-    ${target?`<div class="grad-bar-wrap"><div class="grad-bar-header"><span>To target</span><span>${target}${unit}</span></div><div class="grad-bar"><div class="grad-bar-fill ${barDone?'done':''}" style="width:${barPct}%"></div></div></div>`:''}
+  // Explicit null checks — `val &&` used to drop a legitimate ZERO (0 push-ups
+  // is a real Comeback starting point) and erase that client's whole story.
+  function v(rec,f){const x=rec?.[f];return (x===null||x===undefined||x===''||x==='—')?null:(isNaN(parseFloat(x))?null:parseFloat(x));}
+  const fmt=(n,d)=>n===null?'—':(Math.round(n*(d?10:1))/(d?10:1));
+
+  // ══ THE STORY ══ muscle up · fat down · waist down.
+  // Three numbers, because together they prove RECOMPOSITION — which no single
+  // number can. Body weight is deliberately NOT here: during a recomp muscle
+  // rises while fat falls and the scale does not move, so leading with weight
+  // tells a client they failed on the week they succeeded.
+  const story=[
+    {k:'smm',     label:'Muscle',   unit:' lbs', up:true },
+    {k:'bodyfat', label:'Body Fat', unit:'%',    up:false},
+    {k:'waist',   label:'Waist',    unit:'"',    up:false},
+  ].map(m=>{
+    const a=v(intake,m.k), b=v(latest,m.k);
+    const delta=(a!==null&&b!==null&&latest!==intake)?b-a:null;
+    const good=delta===null?null:(m.up?delta>0:delta<0);
+    return {...m, a, b, delta, good};
+  });
+  const haveStory=story.filter(m=>m.b!==null).length;
+
+  let html='';
+  if(!intake){
+    html+=`<div class="metric-card" style="text-align:center"><div class="metric-name">No Baseline Yet</div>
+      <div style="font-size:12px;color:var(--dim);line-height:1.7;margin-top:6px">Your coach records your starting numbers at your first assessment. Once they are in, your progress shows up here.</div></div>`;
+  } else if(haveStory){
+    html+=`<div style="padding:0 16px 10px"><div class="card-label" style="margin:0">Your Story So Far</div></div>`;
+    html+=`<div class="metric-card" style="padding-top:14px">
+      <div style="display:flex;gap:8px">`+story.map(m=>{
+        const shown=m.delta!==null?((m.delta>0?'+':'')+fmt(m.delta,true)+m.unit):(m.b!==null?fmt(m.b,true)+m.unit:'—');
+        const col=m.delta===null?'var(--dim2)':m.delta===0?'var(--dim2)':m.good?'var(--green)':'var(--red)';
+        return `<div style="flex:1;text-align:center">
+          <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-bottom:4px">${m.label}</div>
+          <div style="font-family:Bebas Neue,sans-serif;font-size:30px;line-height:1;color:${col}">${shown}</div>
+          <div style="font-size:9px;color:var(--dim);margin-top:3px">${m.a!==null?fmt(m.a,true)+m.unit+' → '+(m.b!==null?fmt(m.b,true)+m.unit:'—'):'awaiting retest'}</div>
+        </div>`;}).join('')+`</div>
+      ${story.every(m=>m.delta===null)?`<div style="font-size:11px;color:var(--dim);text-align:center;margin-top:12px;line-height:1.6">These are your starting numbers. Your next assessment is where the story begins.</div>`:''}
     </div>`;
   }
-  let html=`<div style="padding:0 16px 8px"><div class="card-label" style="margin:0">Body Composition</div></div>`;
-  html+=metricCard('Body Weight (lbs)',v(intake,'weight'),v(wk4,'weight'),v(wk8,'weight'),false,'',null);
-  html+=metricCard('Waist (in)',v(intake,'waist'),v(wk4,'waist'),v(wk8,'waist'),false,'"',null);
-  html+=metricCard('Hips (in)',v(intake,'hips'),v(wk4,'hips'),v(wk8,'hips'),false,'"',null);
-  const whrIn=v(intake,'whr'),whr4=v(wk4,'whr'),whr8=v(wk8,'whr');
-  if(whrIn)html+=metricCard('Waist-to-Hip Ratio',whrIn,whr4,whr8,false,'',null);
-  html+=`<div style="padding:12px 16px 8px"><div class="card-label" style="margin:0">Fitness Benchmarks</div></div>`;
-  html+=metricCard('KB Deadlift (reps)',v(intake,'kbdl'),v(wk4,'kbdl'),v(wk8,'kbdl'),true,'',std?.kbdl||null);
-  html+=metricCard('Push-Ups (reps)',v(intake,'pushups'),v(wk4,'pushups'),v(wk8,'pushups'),true,'',std?.pushups||null);
-  html+=metricCard('Plank Hold (sec)',v(intake,'plank'),v(wk4,'plank'),v(wk8,'plank'),true,'s',std?.plank||null);
-  html+=metricCard('500m Row (sec)',v(intake,'row'),v(wk4,'row'),v(wk8,'row'),false,'s',std?.row||null);
-  if(std&&latest){
+
+  // ══ STRENGTH ══ what you can DO. Progress toward the standard is measured
+  // from where YOU started, not from zero — the old bar showed 81% for a client
+  // who had not moved an inch, because it measured how close the target already
+  // was to their intake.
+  function strengthRow(label,key,unit,lowerBetter,target){
+    const a=v(intake,key), b=v(latest,key);
+    if(a===null&&b===null) return '';
+    const delta=(a!==null&&b!==null&&latest!==intake)?b-a:null;
+    const good=delta===null?null:(lowerBetter?delta<0:delta>0);
+    let pct=null, hit=false;
+    if(target!==null&&target!==undefined&&b!==null){
+      hit=lowerBetter?b<=target:b>=target;
+      if(a!==null&&!hit){
+        const total=lowerBetter?(a-target):(target-a);
+        const moved=lowerBetter?(a-b):(b-a);
+        pct=total>0?Math.max(0,Math.min(100,Math.round(moved/total*100))):(hit?100:0);
+      } else if(hit){ pct=100; }
+    }
+    const dCol=delta===null?'var(--dim2)':delta===0?'var(--dim2)':good?'var(--green)':'var(--red)';
+    const dTxt=delta===null?'':(delta===0?'no change':((delta>0?'+':'')+fmt(delta,true)+unit));
+    return `<div class="metric-card">
+      <div style="display:flex;align-items:baseline;justify-content:space-between">
+        <div class="metric-name" style="margin:0">${label}</div>
+        <div style="font-size:11px;font-weight:700;color:${dCol}">${dTxt}</div>
+      </div>
+      <div style="display:flex;align-items:baseline;gap:10px;margin-top:6px">
+        <div style="font-family:Bebas Neue,sans-serif;font-size:26px;line-height:1;color:var(--white)">${b!==null?fmt(b,true)+unit:'—'}</div>
+        <div style="font-size:10px;color:var(--dim)">started at ${a!==null?fmt(a,true)+unit:'—'}</div>
+      </div>
+      ${target!==null&&target!==undefined?`<div class="grad-bar-wrap" style="margin-top:8px">
+        <div class="grad-bar-header"><span>${hit?'Standard met':'Progress to standard'}</span><span>${target}${unit}</span></div>
+        <div class="grad-bar"><div class="grad-bar-fill ${hit?'done':''}" style="width:${pct===null?0:pct}%"></div></div>
+      </div>`:''}
+    </div>`;
+  }
+  html+=`<div style="padding:14px 16px 8px"><div class="card-label" style="margin:0">What You Can Do</div></div>`;
+  html+=strengthRow('Push-Ups','pushups','',false,std?.pushups??null);
+  html+=strengthRow('KB Deadlift','kbdl','',false,std?.kbdl??null);
+  html+=strengthRow('Plank Hold','plank','s',false,std?.plank??null);
+  html+=strengthRow('500m Row','row','s',true,std?.row??null);
+
+  // ══ BODY ══ weight sits here, small and honest, NOT as the headline.
+  // Waist-to-hip ratio is deliberately ABSENT from the client view: losing fat
+  // from the hips shrinks the denominator, so a woman doing everything right
+  // can watch the ratio get WORSE while she gets leaner. It stays coach-side.
+  const bodyRows=[
+    {label:'Body Weight', key:'weight', unit:' lbs'},
+    {label:'Hips',        key:'hips',   unit:'"'},
+  ].map(r=>{
+    const a=v(intake,r.key), b=v(latest,r.key);
+    if(a===null&&b===null) return '';
+    const delta=(a!==null&&b!==null&&latest!==intake)?b-a:null;
+    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;color:var(--dim2)">${r.label}</div>
+      <div style="font-size:12px;color:var(--dim)">${a!==null?fmt(a,true)+r.unit:'—'} → <strong style="color:var(--white)">${b!==null?fmt(b,true)+r.unit:'—'}</strong>
+      ${delta!==null&&delta!==0?`<span style="color:var(--dim);font-size:11px"> (${delta>0?'+':''}${fmt(delta,true)})</span>`:''}</div>
+    </div>`;}).filter(Boolean).join('');
+  if(bodyRows){
+    html+=`<div style="padding:14px 16px 8px"><div class="card-label" style="margin:0">Body Measurements</div></div>`;
+    html+=`<div class="metric-card">${bodyRows}
+      <div style="font-size:10px;color:var(--dim);line-height:1.6;margin-top:10px">Scale weight is the least useful number here. Building muscle while losing fat can leave it unchanged — that is the goal, not a stall.</div></div>`;
+  }
+
+  // ══ HEALTH ══ safety, not progress. Different question, own section.
+  const hrA=v(intake,'rhr'), hrB=v(latest,'rhr');
+  const bpA=intake?.bp||null, bpB=latest?.bp||null;
+  if(hrB!==null||bpB){
+    const hrDelta=(hrA!==null&&hrB!==null&&latest!==intake)?hrB-hrA:null;
+    html+=`<div style="padding:14px 16px 8px"><div class="card-label" style="margin:0">Health Markers</div></div>`;
+    html+=`<div class="metric-card"><div style="display:flex;gap:8px">
+      <div style="flex:1;text-align:center"><div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-bottom:4px">Resting HR</div>
+        <div style="font-family:Bebas Neue,sans-serif;font-size:24px;line-height:1;color:${hrB===null?'var(--dim2)':hrB<60?'var(--green)':hrB<80?'var(--gold)':'var(--red)'}">${hrB===null?'—':hrB}</div>
+        <div style="font-size:9px;color:var(--dim);margin-top:3px">${hrDelta!==null&&hrDelta!==0?(hrDelta>0?'+':'')+hrDelta+' bpm':'bpm'}</div></div>
+      <div style="flex:1;text-align:center"><div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-bottom:4px">Blood Pressure</div>
+        <div style="font-family:Bebas Neue,sans-serif;font-size:24px;line-height:1;color:var(--white)">${bpB||'—'}</div>
+        <div style="font-size:9px;color:var(--dim);margin-top:3px">${bpA&&bpA!==bpB?'was '+bpA:'mmHg'}</div></div>
+    </div></div>`;
+  }
+
+  // ══ STANDARD ══ only once there is something to judge. Showing a
+  // "Graduation Status" panel on day one, scored against intake, told a client
+  // who had not trained yet that they had already failed three of four.
+  if(std&&latest&&latest!==intake){
     const metrics=[
       {name:'KB Deadlift',val:v(latest,'kbdl'),target:std.kbdl,better:true},
       {name:'Push-Ups',val:v(latest,'pushups'),target:std.pushups,better:true},
@@ -2369,10 +2461,10 @@ function renderProgress(){
       {name:'500m Row',val:v(latest,'row'),target:std.row,better:false},
     ];
     const passed=metrics.filter(m=>m.val!=null&&(m.better?m.val>=m.target:m.val<=m.target)).length;
-    html+=`<div class="grad-status"><div class="grad-status-title">Graduation Status \u2014 ${passed}/4 Benchmarks Met</div>
+    html+=`<div class="grad-status"><div class="grad-status-title">${latestLabel} Standard — ${passed}/4 Met</div>
     ${metrics.map(m=>{const met=m.val!=null&&(m.better?m.val>=m.target:m.val<=m.target);
-    return`<div class="grad-metric-row"><span class="grad-check">${met?'\u2705':'\u2b1c'}</span><span class="grad-metric-name">${m.name}</span><div class="grad-metric-vals"><strong>${m.val!=null?m.val:'\u2014'}</strong> / ${m.target}</div></div>`;}).join('')}
-    <div style="margin-top:12px;font-size:12px;color:var(--dim);line-height:1.6">${passed===4?'\ud83c\udf89 All benchmarks met. You are ready for graduation review.':`Hit ${4-passed} more benchmark${4-passed!==1?'s':''} to qualify for BFTM coaching.`}</div></div>`;
+    return`<div class="grad-metric-row"><span class="grad-check">${met?'✅':'⬜'}</span><span class="grad-metric-name">${m.name}</span><div class="grad-metric-vals"><strong>${m.val!=null?m.val:'—'}</strong> / ${m.target}</div></div>`;}).join('')}
+    <div style="margin-top:12px;font-size:12px;color:var(--dim);line-height:1.6">${passed===4?'🎉 All four met. You are ready for graduation review.':`${4-passed} more to qualify for BFTM coaching.`}</div></div>`;
   }
   el.innerHTML=html;
 }
