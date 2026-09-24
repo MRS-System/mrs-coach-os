@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=37 -->
+<!-- portal cache-buster v=38 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2166,26 +2166,40 @@ function sundaySkip(){
 function calcWeekScore(offset=0){
   const pdb=portalDb(),days=getWeekDays(offset);
   const freq=client?(client.freq==='2x/week'?2:client.freq==='4x/week'?4:3):3;
-  let protein=0,water=0,workouts=0;
-  let energySum=0,energyDays=0,sleepSum=0,sleepDays=0,stressSum=0,stressDays=0,daysLogged=0;
+  // ── THE FIVE NON-NEGOTIABLES — Sleep · Eat · Workout · Walk · Water ──
+  // 35 = all five, all seven days. Every leg is a DAY COUNT: one point per day
+  // you did the thing. No averaging, no consistency multiplier — a day count is
+  // structurally honest (one good day is one point, never close to seven), which
+  // is what the old gate was bolted on to fake.
+  const yes=v=>v===true||v==='yes';
+  // sleep has been written in TWO formats — boolean (daily check item) and
+  // numeric 1-10 (slider). The old code summed them together, coercing `true`
+  // to 1, so a perfect sleep week scored 1/7. Normalise both here.
+  const sleptWell=v=>v===true||v==='yes'||(typeof v==='number'&&v>=7);
+  let sleep=0,eat=0,walk=0,water=0,workouts=0;
+  let energySum=0,energyDays=0,sleepSum=0,sleepNum=0,stressSum=0,stressDays=0,daysLogged=0,restDays=0;
   days.forEach(d=>{
     const ci=pdb.checkins[d.key];if(!ci)return;
-    const any=(ci.protein===true||ci.protein==='yes')||(ci.water===true||ci.water==='yes')
-      ||(ci.workout==='yes'||ci.workout===true)||ci.energy!=null||ci.sleep!=null||ci.stress!=null
-      ||(ci.meals&&ci.meals.length)||(ci.barcodeItems&&ci.barcodeItems.length);
+    const any=yes(ci.protein)||yes(ci.water)||yes(ci.steps)||ci.workout!=null||ci.sleep!=null
+      ||ci.energy!=null||ci.stress!=null||(ci.meals&&ci.meals.length)||(ci.barcodeItems&&ci.barcodeItems.length);
     if(any)daysLogged++;
-    if(ci.protein===true||ci.protein==='yes')protein++;
-    if(ci.water===true||ci.water==='yes')water++;
-    if(ci.workout==='yes'||ci.workout===true)workouts++;
-    // Only real entries count — no defaulting an untouched slider to 5.
+    if(sleptWell(ci.sleep))sleep++;
+    if(yes(ci.protein))eat++;
+    if(yes(ci.steps))walk++;          // WALK — captured all along, never scored until now
+    if(yes(ci.water))water++;
+    if(yes(ci.workout))workouts++;
+    if(ci.workout==='rest')restDays++; // honest answer, not a failure — see note below
+    // Diagnostics only. Energy and stress are not controllables, so they inform
+    // the coach but no longer move the score.
     if(ci.energy!=null){energySum+=ci.energy;energyDays++;}
-    if(ci.sleep!=null){sleepSum+=ci.sleep;sleepDays++;}
+    if(typeof ci.sleep==='number'){sleepSum+=ci.sleep;sleepNum++;}
     if(ci.stress!=null){stressSum+=ci.stress;stressDays++;}
   });
   const clamp=v=>Math.max(0,Math.min(7,Math.round(v)));
-  // Workouts now count the REAL record: a program-tab session logged inside this
-  // week (slot data or marked done) counts, not just the daily yes/no toggle.
-  // Either path earns credit — max(), never both — so nobody loses what they had.
+  // Workouts count the REAL record: a program-tab session logged inside this week
+  // (slot data or marked done), or the daily toggle. max() — either path earns
+  // credit, neither double-counts. Rest days are inherently neutral here because
+  // the leg scores sessions-against-frequency, not days-out-of-seven.
   const dayKeys=new Set(days.map(d=>d.key));
   const inWeek=ts=>{ if(!ts)return false; const d=new Date(ts);
     return dayKeys.has(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); };
@@ -2201,28 +2215,17 @@ function calcWeekScore(offset=0){
   const sessionWorkouts=sessionsThisWeek.size;
   workouts=Math.max(workouts,sessionWorkouts);
   const workoutScore=freq>0?Math.min(7,Math.round((workouts/freq)*7)):0;
-  // Quality categories are GATED by days actually logged (× loggedDays/7) so ONE
-  // good day can't approach 7/7 — the /49 total now reflects consistency, not a
-  // single day's quality. Energy/Sleep/Stress gate by their own logged-day count;
-  // Nutrition is a single weekly self-rating, so it gates by overall days logged.
-  const energyScore=energyDays>0?clamp((energySum/energyDays/10)*7*(energyDays/7)):0;
-  const sleepScore =sleepDays>0 ?clamp((sleepSum/sleepDays/10)*7*(sleepDays/7)):0;
-  const stressScore=stressDays>0?clamp(((10-stressSum/stressDays)/10)*7*(stressDays/7)):0;
-  // WELLNESS — energy/sleep/stress collapse into ONE 0-7 leg. Scored separately
-  // they triple-penalised a single skipped day (three gates, one omission).
-  // Average only the legs the client actually logged.
-  const wellParts=[];
-  if(energyDays>0)wellParts.push((energySum/energyDays/10)*7*(energyDays/7));
-  if(sleepDays>0) wellParts.push((sleepSum/sleepDays/10)*7*(sleepDays/7));
-  if(stressDays>0)wellParts.push(((10-stressSum/stressDays)/10)*7*(stressDays/7));
-  const wellnessScore=wellParts.length?clamp(wellParts.reduce((a,b)=>a+b,0)/wellParts.length):0;
+  // ── DIAGNOSTICS (not scored) ──
+  const energyScore=energyDays>0?clamp((energySum/energyDays/10)*7):0;
+  const sleepAvg   =sleepNum>0  ?Math.round((sleepSum/sleepNum)*10)/10:null;
+  const stressScore=stressDays>0?clamp(((10-stressSum/stressDays)/10)*7):0;
   const wk=weekKey(offset);
   const nutritionRaw=pdb.weekScores?.[wk]?.nutrition||0;
-  const nutritionScore=nutritionRaw>0?clamp((nutritionRaw/10)*7*(daysLogged/7)):0;
-  // /35 = 5 legs x 7. energy/sleep/stress still returned for diagnostics but no
-  // longer scored individually — wellnessScore is the leg that counts.
-  const total=protein+water+workoutScore+wellnessScore+nutritionScore;
-  return{protein,water,workoutScore,wellnessScore,energyScore,sleepScore,stressScore,nutritionScore,total,workouts,sessionWorkouts,freq,dayCount:daysLogged,scoreVersion:2,scoreMax:35};
+  const nutritionScore=nutritionRaw>0?clamp((nutritionRaw/10)*7):0;
+  const total=sleep+eat+workoutScore+walk+water;
+  return{sleep,eat,workoutScore,walk,water,total,
+    protein:eat,nutritionScore,energyScore,stressScore,sleepAvg,restDays,
+    workouts,sessionWorkouts,freq,dayCount:daysLogged,scoreVersion:3,scoreMax:35};
 }
 
 function renderScore(){
@@ -2243,11 +2246,11 @@ function renderScore(){
   document.getElementById('streakNum').textContent=pdb.streak||0;
   document.getElementById('streakSub').textContent=pdb.streak>0?`${pdb.streak} week${pdb.streak!==1?'s':''} above the standard`:'Hit 25+ this week to start your streak';
   const rows=[
-    {icon:'\ud83e\udd69',label:'Protein',score:scores.protein,max:7},
+    {icon:'\ud83d\ude34',label:'Sleep',score:scores.sleep,max:7},
+    {icon:'\ud83e\udd69',label:'Eat',score:scores.eat,max:7},
+    {icon:'\ud83c\udfcb\ufe0f',label:'Workout',score:scores.workoutScore,max:7},
+    {icon:'\ud83d\udc5f',label:'Walk',score:scores.walk,max:7},
     {icon:'\ud83d\udca7',label:'Water',score:scores.water,max:7},
-    {icon:'\ud83c\udfcb\ufe0f',label:'Workouts',score:scores.workoutScore,max:7},
-    {icon:'\u26a1',label:'Wellness',score:scores.wellnessScore,max:7},
-    {icon:'\ud83e\udd57',label:'Nutrition',score:scores.nutritionScore,max:7},
   ];
   document.getElementById('breakdownRows').innerHTML=rows.map(r=>`<div class="breakdown-row">
     <div class="breakdown-left"><span class="breakdown-icon">${r.icon}</span><span class="breakdown-label">${r.label}</span></div>
@@ -2264,10 +2267,11 @@ function updateNutritionScore(){
   // Same consistency gate as calcWeekScore so the live preview matches the saved score.
   const nGate=(scores.dayCount||0)/7;
   const nutritionScore=Math.max(0,Math.min(7,Math.round((val/10)*7*nGate)));
-  const projected=scores.total-scores.nutritionScore+nutritionScore;
-  const offset=427.26-(projected/35*427.26);
+  // Nutrition is a coach diagnostic now, not one of the five legs, so the
+  // self-rating no longer moves the ring. Keep the ring on the real total.
+  const offset=427.26-(scores.total/35*427.26);
   document.getElementById('scoreRingFill').style.strokeDashoffset=offset;
-  document.getElementById('scoreBig').textContent=projected;
+  document.getElementById('scoreBig').textContent=scores.total;
 }
 
 function saveNutritionScore(){

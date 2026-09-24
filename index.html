@@ -4635,7 +4635,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=37';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=38';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4820,7 +4820,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=37',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=38',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -6554,8 +6554,9 @@ function renderAnalytics() {
 // runs once per week-record and is a no-op afterwards. Never edits measurements.
 function recomputeWeekRecord(w, freqFallback) {
   const b = w.scoreBreakdown || {};
-  const clamp = v => Math.max(0, Math.min(7, Math.round(v)));
-  // The week's seven day keys, derived from the calendar-Sunday weekKey.
+  const yes = v => v === true || v === 'yes';
+  // sleep was written as BOTH boolean and numeric 1-10; treat >=7 as a good night.
+  const sleptWell = v => v === true || v === 'yes' || (typeof v === 'number' && v >= 7);
   const dm = /^week-(\d{4})-(\d{2})-(\d{2})$/.exec(w.weekKey || '');
   const dayKeys = new Set();
   if (dm) {
@@ -6566,24 +6567,25 @@ function recomputeWeekRecord(w, freqFallback) {
   const inWeek = ts => { if(!ts||!dayKeys.size) return false; const d=new Date(ts);
     return dayKeys.has(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); };
 
-  // Protein / water are day counts (0-7) — unchanged by the rescale.
-  let protein=0, water=0, toggleWorkouts=0;
+  // The five non-negotiables, each a day count out of 7.
+  let sleep=0, eat=0, walk=0, water=0, toggleWorkouts=0, restDays=0;
   let eSum=0,eN=0,sSum=0,sN=0,stSum=0,stN=0,daysLogged=0;
   Object.values(w.checkins||{}).forEach(ci=>{
     if(!ci) return;
-    const any=(ci.protein===true||ci.protein==='yes')||(ci.water===true||ci.water==='yes')
-      ||(ci.workout==='yes'||ci.workout===true)||ci.energy!=null||ci.sleep!=null||ci.stress!=null
-      ||(ci.meals&&ci.meals.length)||(ci.barcodeItems&&ci.barcodeItems.length);
+    const any=yes(ci.protein)||yes(ci.water)||yes(ci.steps)||ci.workout!=null||ci.sleep!=null
+      ||ci.energy!=null||ci.stress!=null||(ci.meals&&ci.meals.length)||(ci.barcodeItems&&ci.barcodeItems.length);
     if(any)daysLogged++;
-    if(ci.protein===true||ci.protein==='yes')protein++;
-    if(ci.water===true||ci.water==='yes')water++;
-    if(ci.workout==='yes'||ci.workout===true)toggleWorkouts++;
+    if(sleptWell(ci.sleep))sleep++;
+    if(yes(ci.protein))eat++;
+    if(yes(ci.steps))walk++;
+    if(yes(ci.water))water++;
+    if(yes(ci.workout))toggleWorkouts++;
+    if(ci.workout==='rest')restDays++;
     if(ci.energy!=null){eSum+=ci.energy;eN++;}
-    if(ci.sleep!=null){sSum+=ci.sleep;sN++;}
+    if(typeof ci.sleep==='number'){sSum+=ci.sleep;sN++;}
     if(ci.stress!=null){stSum+=ci.stress;stN++;}
   });
 
-  // THE FIX: count real sessions logged inside this week.
   const sess=new Set();
   Object.entries(w.slotLogs||{}).forEach(([sid,logs])=>{
     if(!logs) return;
@@ -6597,21 +6599,15 @@ function recomputeWeekRecord(w, freqFallback) {
   const freq = b.freq || freqFallback || 3;
   const workouts = Math.max(toggleWorkouts, sess.size);
   const workoutScore = freq>0 ? Math.min(7, Math.round((workouts/freq)*7)) : 0;
-
-  const wp=[];
-  if(eN>0) wp.push((eSum/eN/10)*7*(eN/7));
-  if(sN>0) wp.push((sSum/sN/10)*7*(sN/7));
-  if(stN>0)wp.push(((10-stSum/stN)/10)*7*(stN/7));
-  const wellnessScore = wp.length ? clamp(wp.reduce((a,b2)=>a+b2,0)/wp.length) : 0;
-
-  // Nutrition: the raw 1-10 slider never travels, only its computed 0-7 leg —
-  // which is unchanged by the rescale, so carry it forward as-is.
-  const nutritionScore = b.nutritionScore || 0;
-  const total = protein + water + workoutScore + wellnessScore + nutritionScore;
-  return {protein, water, workoutScore, wellnessScore,
-          energyScore:b.energyScore||0, sleepScore:b.sleepScore||0, stressScore:b.stressScore||0,
-          nutritionScore, total, workouts, sessionWorkouts:sess.size, freq,
-          dayCount:daysLogged, scoreVersion:2, scoreMax:35};
+  const clamp = v => Math.max(0, Math.min(7, Math.round(v)));
+  const total = sleep + eat + workoutScore + walk + water;
+  return {sleep, eat, workoutScore, walk, water, total,
+    protein:eat, nutritionScore:b.nutritionScore||0,
+    energyScore: eN>0?clamp((eSum/eN/10)*7):0,
+    stressScore: stN>0?clamp(((10-stSum/stN)/10)*7):0,
+    sleepAvg: sN>0?Math.round((sSum/sN)*10)/10:null,
+    restDays, workouts, sessionWorkouts:sess.size, freq,
+    dayCount:daysLogged, scoreVersion:3, scoreMax:35};
 }
 
 function recomputeWeeklyScores(opts) {
@@ -6621,7 +6617,7 @@ function recomputeWeeklyScores(opts) {
   let changed = 0;
   (data.clients||[]).forEach(c => {
     (c.weeklyData||[]).forEach(w => {
-      if ((w.scoreBreakdown||{}).scoreVersion === 2) return;
+      if ((w.scoreBreakdown||{}).scoreVersion === 3) return;
       const before = w.weekScore || 0;
       const nb = recomputeWeekRecord(w, c.freq==='2x/week'?2:c.freq==='4x/week'?4:3);
       report.push({client:c.name, week:w.weekKey, before, after:nb.total,
