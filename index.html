@@ -1393,111 +1393,102 @@ function renderDashboard() {
     return missing.length > 0;
   });
 
-  let alertHtml = '<div id="dashAlert">';
+  // ── NEEDS YOU TODAY ────────────────────────────────────────────
+  // Replaces four stacked full-width banners (one per CATEGORY, each often
+  // about a single client, ~660px of screen for three facts) with ONE list of
+  // PEOPLE, ranked by urgency, each row carrying the action. Adds the case that
+  // was missing entirely and mattered most: a client who has gone quiet.
+  const DAY = 86400000;
+  const parseWk = k => { const m = /^week-(\d{4})-(\d{2})-(\d{2})$/.exec(k || ''); return m ? new Date(+m[1], +m[2]-1, +m[3]) : null; };
+  const needs = [];
+  const add = (c, rank, tag, tagCol, why) => needs.push({ c, rank, tag, tagCol, why });
 
-  // Cardiovascular flags — highest priority alert
-  const cardioFlags = clients.filter(c => {
-    if (c.status === 'inactive') return false;
+  clients.forEach(c => {
+    if (c.status === 'inactive') return;
     const m = c.measurements || {};
     const latest = m.week8 || m.week4 || m.intake;
-    if (!latest) return false;
-    const pss = calcPSS(latest, c.gender);
-    return pss && (pss.bpFlag || pss.rhrFlag);
+
+    // 1. Cardiovascular — clinical, always first.
+    if (latest) {
+      const pss = calcPSS(latest, c.gender);
+      if (pss && (pss.bpFlag || pss.rhrFlag)) {
+        const bits = [];
+        if (pss.rhrFlag && latest.rhr) bits.push('RHR ' + latest.rhr);
+        if (pss.bpFlag && latest.bp) bits.push('BP ' + latest.bp);
+        add(c, 0, 'HEALTH FLAG', 'var(--red)', bits.join(' · ') || 'Review with client');
+      }
+    }
+
+    // 2. Gone quiet — the one the dashboard never surfaced at all.
+    const ws = (c.weeklyData || []).map(w => parseWk(w.weekKey)).filter(Boolean).sort((a,b) => b - a);
+    const startAt = (() => { const pr = (c.programs||[]).find(p => p.id === c.activeProgramId); return (pr && pr.date) || c.createdAt; })();
+    if (ws.length) {
+      const silent = Math.floor((Date.now() - ws[0]) / DAY);
+      if (silent >= 14)     add(c, 1, 'SILENT ' + silent + 'd', 'var(--red)', 'Last check-in ' + ws[0].toLocaleDateString('en-US',{month:'short',day:'numeric'}));
+      else if (silent >= 8) add(c, 3, 'QUIET ' + silent + 'd', 'var(--gold)', 'Last check-in ' + ws[0].toLocaleDateString('en-US',{month:'short',day:'numeric'}));
+    } else if (startAt && (Date.now() - startAt) / DAY >= 10) {
+      add(c, 1, 'NEVER CHECKED IN', 'var(--red)', 'Started ' + Math.floor((Date.now()-startAt)/DAY) + ' days ago');
+    }
+
+    // 3. No baseline — no progress story is possible without it.
+    const mi = Array.isArray(m) ? null : m.intake;
+    if (!mi) add(c, 2, 'NO BASELINE', 'var(--red)', 'No intake measurements recorded');
+    else {
+      const missing = [];
+      if (!mi.bodyfat) missing.push('Body Fat');
+      if (!mi.smm) missing.push('Muscle Mass');
+      if (!mi.waist) missing.push('Waist');
+      if (missing.length) add(c, 4, 'INTAKE GAPS', 'var(--gold)', 'Missing ' + missing.join(' · '));
+    }
+
+    // 4. Retests due.
+    if (startAt) {
+      const d = (Date.now() - startAt) / DAY;
+      if (d >= 54 && !m.week8)      add(c, 3, 'WEEK 8 DUE', 'var(--gold)', 'Day ' + Math.floor(d) + ' — graduation retest');
+      else if (d >= 26 && !m.week4) add(c, 3, 'WEEK 4 DUE', 'var(--gold)', 'Day ' + Math.floor(d) + ' — mid-block retest');
+    }
   });
 
-  if (cardioFlags.length > 0) {
-    alertHtml += `
-    <div style="background:rgba(220,38,38,.08);border:2px solid rgba(220,38,38,.4);border-radius:14px;padding:1rem 1.25rem;margin-bottom:1rem">
-      <div style="font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--red);margin-bottom:.5rem">
-        🚨 Cardiovascular Flag — ${cardioFlags.length} client${cardioFlags.length!==1?'s':''}
-      </div>
-      <div style="font-size:11px;color:var(--dim);margin-bottom:.75rem">Resting HR above 100 BPM or Stage 2 hypertension detected. Review with client and consider physician referral.</div>
-      ${cardioFlags.map(c => {
-        const latest = c.measurements?.week8 || c.measurements?.week4 || c.measurements?.intake;
-        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.5rem 0;border-bottom:1px solid rgba(220,38,38,.15)">
-          <div>
-            <div style="font-size:13px;font-weight:700;color:var(--white)">${c.name}</div>
-            <div style="font-size:11px;color:var(--red)">${latest?.rhr ? 'RHR: ' + latest.rhr + ' BPM' : ''} ${latest?.bp ? '· BP: ' + latest.bp : ''}</div>
-          </div>
-          <button class="btn sm" style="background:rgba(220,38,38,.1);color:var(--red);border-color:rgba(220,38,38,.2);white-space:nowrap" onclick="nav('profile','${c.id}')">View Profile</button>
-        </div>`;
-      }).join('')}
-    </div>`
-  }
+  // ONE ROW PER PERSON. Ungrouped, a client with three issues appeared three
+  // times and the list read as noise rather than a call sheet. Collapse to the
+  // most urgent tag per client and carry the rest as secondary reasons.
+  const byClient = {};
+  needs.forEach(n => {
+    const k = n.c.id;
+    if (!byClient[k]) { byClient[k] = { c: n.c, rank: n.rank, tag: n.tag, tagCol: n.tagCol, why: n.why, extra: [] }; return; }
+    const g = byClient[k];
+    if (n.rank < g.rank) { g.extra.unshift(g.tag.toLowerCase()); g.rank = n.rank; g.tag = n.tag; g.tagCol = n.tagCol; g.why = n.why; }
+    else g.extra.push(n.tag.toLowerCase());
+  });
+  const rows = Object.values(byClient)
+    .sort((a, b) => a.rank - b.rank || String(a.c.name).localeCompare(String(b.c.name)));
 
-  // Incomplete intake section
-  if (incompleteIntake.length > 0) {
-    alertHtml += `
-    <div style="background:rgba(220,38,38,.06);border:1px solid rgba(220,38,38,.2);border-radius:14px;padding:1rem 1.25rem;margin-bottom:1rem">
-      <div style="font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--red);margin-bottom:.75rem">
-        ⚠ Incomplete Intake Data — ${incompleteIntake.length} client${incompleteIntake.length!==1?'s':''}
-      </div>
-      <div style="font-size:10px;color:var(--dim);margin-bottom:.75rem">Required: Weight · Waist · Hips · KB Deadlift · Push-Ups · 500m Row · Plank · Body Fat · SMM</div>
-      ${incompleteIntake.map(c => {
-        const missing = getMissing(c.measurements?.intake);
-        const physical = missing.filter(m => ['Weight','Waist','Hips'].includes(m));
-        const perf = missing.filter(m => ['KB Deadlift','Push-Ups','500m Row','Plank'].includes(m));
-        const inbody = missing.filter(m => ['Body Fat','SMM'].includes(m));
-        return `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;padding:.6rem 0;border-bottom:1px solid rgba(220,38,38,.1)">
-          <div>
-            <div style="font-size:13px;font-weight:700;color:var(--white);margin-bottom:3px">${c.name}</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-              ${physical.length ? `<span style="font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--red);background:rgba(220,38,38,.1);padding:2px 6px;border-radius:4px">📏 ${physical.join(' · ')}</span>` : ''}
-              ${perf.length ? `<span style="font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);background:rgba(201,162,39,.1);padding:2px 6px;border-radius:4px">💪 ${perf.join(' · ')}</span>` : ''}
-              ${inbody.length ? `<span style="font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#60a5fa;background:rgba(96,165,250,.1);padding:2px 6px;border-radius:4px">📊 ${inbody.join(' · ')}</span>` : ''}
-            </div>
-          </div>
-          <button class="btn sm" style="background:rgba(220,38,38,.1);color:var(--red);border-color:rgba(220,38,38,.2);white-space:nowrap;flex-shrink:0" onclick="nav('profile','${c.id}');setTimeout(()=>openMeasure('${c.id}','intake'),300)">Complete Intake</button>
-        </div>`;
-      }).join('')}
-    </div>`;
+  let alertHtml = '<div id="dashAlert">';
+  if (rows.length) {
+    alertHtml += '<div style="background:var(--black-3);border:1px solid var(--border);border-radius:14px;padding:1rem 1.25rem;margin-bottom:1.25rem">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--gold)">Needs You Today</div>'
+      + '<div style="font-size:10px;color:var(--dim)">' + rows.length + ' client' + (rows.length !== 1 ? 's' : '') + '</div></div>'
+      + rows.map(n => {
+        const c = n.c;
+        const sms = c.phone
+          ? '<a href="sms:' + c.phone + '?body=' + encodeURIComponent('Hey ' + (c.name||'').split(' ')[0] + ' — checking in. How did this week go?')
+            + '" onclick="event.stopPropagation()" class="btn sm" style="text-decoration:none;background:rgba(34,197,94,.1);color:var(--green-br);border-color:rgba(34,197,94,.25)">Text</a>'
+          : '<span class="btn sm" style="opacity:.35;cursor:not-allowed" title="No phone number on file — add one in Edit">Text</span>';
+        return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border)">'
+          + '<div style="min-width:74px"><span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.08em;color:' + n.tagCol + '">' + n.tag + '</span></div>'
+          + '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--white)">' + (c.name||'—') + '</div>'
+          + '<div style="font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + n.why
+          + (n.extra.length ? ' <span style="color:var(--dim);opacity:.7">· also ' + n.extra.join(' · ') + '</span>' : '') + '</div></div>'
+          + '<div class="btn-row" style="flex-shrink:0">' + sms
+          + '<button class="btn sm" onclick="nav(\'profile\',\'' + c.id + '\')">Open</button></div></div>';
+      }).join('')
+      + '</div>';
+  } else if (clients.length) {
+    alertHtml += '<div style="background:rgba(34,197,94,.05);border:1px solid rgba(34,197,94,.15);border-radius:14px;padding:.9rem 1.25rem;margin-bottom:1.25rem;font-size:12px;color:var(--green-br)">Nothing needs you today. Everyone is checked in, measured and on schedule.</div>';
   }
-
-  // Week 4 due section
-  if (week4Due.length > 0) {
-    alertHtml += `
-    <div style="background:rgba(201,162,39,.08);border:1px solid rgba(201,162,39,.2);border-radius:14px;padding:1rem 1.25rem;margin-bottom:1rem">
-      <div style="font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:.75rem">⏱ Week 4 Reassessment Due — ${week4Due.length} client${week4Due.length!==1?'s':''}</div>
-      ${week4Due.map(c => `
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.5rem 0;border-bottom:1px solid rgba(201,162,39,.1)">
-          <span style="font-size:13px;font-weight:600;color:var(--white)">${c.name}</span>
-          <button class="btn sm gold" onclick="nav('profile','${c.id}')" style="white-space:nowrap;flex-shrink:0">Open Profile</button>
-        </div>`).join('')}
-    </div>`;
-  }
-
-  // Week 8 due section
-  if (week8Due.length > 0) {
-    alertHtml += `
-    <div style="background:rgba(201,162,39,.08);border:1px solid rgba(201,162,39,.2);border-radius:14px;padding:1rem 1.25rem;margin-bottom:1rem">
-      <div style="font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:.75rem">🎓 Week 8 Reassessment Due — ${week8Due.length} client${week8Due.length!==1?'s':''}</div>
-      ${week8Due.map(c => `
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.5rem 0;border-bottom:1px solid rgba(201,162,39,.1)">
-          <span style="font-size:13px;font-weight:600;color:var(--white)">${c.name}</span>
-          <button class="btn sm gold" onclick="nav('profile','${c.id}')" style="white-space:nowrap;flex-shrink:0">Open Profile</button>
-        </div>`).join('')}
-    </div>`;
-  }
-
-  // Week 4 incomplete data
-  if (week4Incomplete.length > 0) {
-    alertHtml += `
-    <div style="background:rgba(201,162,39,.05);border:1px solid rgba(201,162,39,.15);border-radius:14px;padding:1rem 1.25rem;margin-bottom:1rem">
-      <div style="font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);margin-bottom:.75rem">📋 Incomplete Week 4 Data — ${week4Incomplete.length} client${week4Incomplete.length!==1?'s':''}</div>
-      ${week4Incomplete.map(c => {
-        const missing = getMissing(c.measurements.week4);
-        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.5rem 0;border-bottom:1px solid rgba(201,162,39,.1)">
-          <div>
-            <span style="font-size:13px;font-weight:600;color:var(--white)">${c.name}</span>
-            <span style="font-size:10px;color:var(--dim);margin-left:.5rem">Missing: ${missing.join(', ')}</span>
-          </div>
-          <button class="btn sm" style="background:rgba(201,162,39,.1);color:var(--gold);border-color:rgba(201,162,39,.2);white-space:nowrap;flex-shrink:0" onclick="nav('profile','${c.id}');setTimeout(()=>openMeasure('${c.id}','week4'),300)">Complete Week 4</button>
-        </div>`;
-      }).join('')}
-    </div>`;
-  }
-
   alertHtml += '</div>';
+
   document.getElementById('statsGrid').insertAdjacentHTML('afterend', alertHtml);
 
   // Show ALL clients, not capped at 6
@@ -4643,7 +4634,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=40';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=41';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4828,7 +4819,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=40',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=41',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5193,59 +5184,78 @@ function buildTrendsSection(c) {
     </div>`;
   }
 
-  // ── MINI LINE CHART (SVG) ──────────────────────────────────────
+  // ── MINI LINE CHART ────────────────────────────────────────────
+  // Rewritten. The old version drew everything inside a 260x50 viewBox with a
+  // fixed pixel height, so preserveAspectRatio centred it and the chart rendered
+  // 260px wide adrift in a 2000px card, with the x-axis labels in a separate
+  // space-between flex row that never lined up with the dots.
+  // Now: the LINE is SVG on a 0-100 percentage viewBox stretched to fill (stroke
+  // kept true with vector-effect), and the dots, values and axis labels are
+  // absolutely-positioned HTML at the same percentages — so they align by
+  // construction at any width.
   function miniChart(label, dataPoints, color, unit, lowerBetter, thresholds) {
     if (!dataPoints.length) return '';
-    const vals = dataPoints.map(d => d.val).filter(v => v !== null && !isNaN(v));
-    if (!vals.length) return '';
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    const range = max - min || 1;
-    const W = 260, H = 50, PAD = 6;
-    const xStep = dataPoints.length > 1 ? (W - PAD*2) / (dataPoints.length - 1) : 0;
+    const real = dataPoints.filter(d => d.val !== null && d.val !== undefined && !isNaN(d.val));
+    if (!real.length) return '';
 
-    const points = dataPoints.map((d, i) => {
-      if (d.val === null || isNaN(d.val)) return null;
-      const x = PAD + i * xStep;
-      const y = H - PAD - ((d.val - min) / range) * (H - PAD*2);
-      return {x, y, val:d.val, label:d.label};
-    }).filter(Boolean);
+    // Y-RANGE includes every threshold, so a target line can never fall outside
+    // the chart and vanish — which used to hide the "35 = good" line from exactly
+    // the struggling clients who needed to see it.
+    const vals = real.map(d => d.val);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    (thresholds || []).forEach(t => { lo = Math.min(lo, t.val); hi = Math.max(hi, t.val); });
+    if (hi === lo) { hi = lo + 1; lo = lo - 1; }
+    const padV = (hi - lo) * 0.15; lo -= padV; hi += padV;
+    const PADX = 4, SPAN = 92;
+    const xPct = i => dataPoints.length > 1 ? PADX + (i / (dataPoints.length - 1)) * SPAN : 50;
+    const yPct = v => 100 - ((v - lo) / (hi - lo)) * 100;
 
-    if (points.length < 1) return '';
+    // Null points break the line instead of being bridged as if data existed.
+    const segs = []; let cur = [];
+    dataPoints.forEach((d, i) => {
+      if (d.val === null || d.val === undefined || isNaN(d.val)) { if (cur.length) { segs.push(cur); cur = []; } return; }
+      cur.push({ x: xPct(i), y: yPct(d.val), val: d.val, i });
+    });
+    if (cur.length) segs.push(cur);
+    const pts = segs.flat();
+    if (!pts.length) return '';
 
-    const polyline = points.map(p => `${p.x},${p.y}`).join(' ');
-    const latest = points[points.length-1];
-    const first = points[0];
+    const first = pts[0], latest = pts[pts.length - 1];
     const trend = latest.val - first.val;
-    const trendGood = lowerBetter ? trend < 0 : trend > 0;
-    const trendColor = points.length > 1 ? (trendGood ? 'var(--green-br)' : 'var(--red)') : 'var(--dim)';
+    const good = lowerBetter ? trend < 0 : trend > 0;
+    const trendColor = pts.length > 1 ? (trend === 0 ? 'var(--dim-2)' : good ? 'var(--green-br)' : 'var(--red)') : 'var(--dim)';
+    const arrow = trend === 0 ? '' : (trend > 0 ? '↑' : '↓');
+    const delta = trend === 0 ? 'no change' : arrow + Math.abs(trend).toFixed(Math.abs(trend) % 1 === 0 ? 0 : 1);
 
-    // Threshold lines
-    let thresholdLines = '';
-    if (thresholds) {
-      thresholds.forEach(t => {
-        const ty = H - PAD - ((t.val - min) / range) * (H - PAD*2);
-        if (ty > 0 && ty < H) {
-          thresholdLines += `<line x1="${PAD}" y1="${ty}" x2="${W-PAD}" y2="${ty}" stroke="${t.color}" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>`;
-          thresholdLines += `<text x="${W-PAD+2}" y="${ty+3}" font-size="7" fill="${t.color}" opacity="0.7">${t.label}</text>`;
-        }
-      });
-    }
+    const lines = segs.filter(sg => sg.length > 1)
+      .map(sg => `<polyline points="${sg.map(p => p.x + ',' + p.y).join(' ')}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>`).join('');
+    const thr = (thresholds || []).map(t => {
+      const y = yPct(t.val);
+      return `<line x1="0" y1="${y}" x2="100" y2="${y}" stroke="${t.color}" stroke-width="1" vector-effect="non-scaling-stroke" stroke-dasharray="3,3" opacity="0.55"/>`;
+    }).join('');
+    const thrLabels = (thresholds || []).map(t =>
+      `<div style="position:absolute;right:0;top:${yPct(t.val)}%;transform:translateY(-50%);font-size:8px;color:${t.color};opacity:.8;background:var(--black-3);padding:0 3px;border-radius:3px">${t.label}</div>`).join('');
 
-    return `<div style="margin-bottom:.75rem">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
+    // Thin the value labels when crowded — 8px text every ~30px was unreadable mush.
+    const step = pts.length > 8 ? 3 : pts.length > 5 ? 2 : 1;
+    const dots = pts.map((p, n) => {
+      const show = n === 0 || n === pts.length - 1 || n % step === 0;
+      return `<div style="position:absolute;left:${p.x}%;top:${p.y}%;transform:translate(-50%,-50%);width:6px;height:6px;border-radius:50%;background:${color}"></div>`
+        + (show ? `<div style="position:absolute;left:${p.x}%;top:${p.y}%;transform:translate(-50%,-160%);font-size:8px;color:var(--dim-2);white-space:nowrap">${p.val}${unit}</div>` : '');
+    }).join('');
+    const axis = dataPoints.map((d, i) =>
+      `<div style="position:absolute;left:${xPct(i)}%;transform:translateX(-50%);font-size:8px;color:var(--dim);white-space:nowrap">${d.label}</div>`).join('');
+
+    return `<div style="margin-bottom:1rem">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <div style="font-size:10px;font-weight:700;color:var(--dim-2);font-family:Barlow Condensed,sans-serif;letter-spacing:.08em;text-transform:uppercase">${label}</div>
-        <div style="font-size:11px;font-weight:700;color:${trendColor}">${latest.val}${unit}${points.length > 1 ? ' <span style="font-size:9px">'+(trend>0?'↑':'↓')+Math.abs(trend).toFixed(trend%1===0?0:1)+'</span>' : ''}</div>
+        <div style="font-size:11px;font-weight:700;color:${trendColor}">${latest.val}${unit}${pts.length > 1 ? ' <span style="font-size:9px;font-weight:400">' + delta + '</span>' : ''}</div>
       </div>
-      <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;overflow:visible">
-        ${thresholdLines}
-        <polyline points="${polyline}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        ${points.map(p => `<circle cx="${p.x}" cy="${p.y}" r="3" fill="${color}"/>`).join('')}
-        ${points.map(p => `<text x="${p.x}" y="${p.y-6}" text-anchor="middle" font-size="8" fill="var(--dim)">${p.val}${unit}</text>`).join('')}
-      </svg>
-      <div style="display:flex;justify-content:space-between;margin-top:-4px">
-        ${dataPoints.map(d => `<div style="font-size:8px;color:var(--dim);text-align:center">${d.label}</div>`).join('')}
+      <div style="position:relative;height:62px">
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%">${thr}${lines}</svg>
+        ${dots}${thrLabels}
       </div>
+      <div style="position:relative;height:12px;margin-top:2px">${axis}</div>
     </div>`;
   }
 
@@ -5258,7 +5268,17 @@ function buildTrendsSection(c) {
   }
 
   // WEEKLY SCORE TREND
-  const scorePts = weeks.map(w => ({val:w.weekScore||0, label:'W'+w.weekKey.slice(-2).replace('-','')}));
+  // Program-week labels, not day-of-month. programWeekLabel already resolves
+  // "Week N of 8" against the active program's start date; reduce it to "W N",
+  // falling back to a short date when it is outside the block.
+  const wkLabel = w => {
+    const full = programWeekLabel(c, w.weekKey);
+    const m = /^Week (\d+) of 8$/.exec(full);
+    return m ? 'W' + m[1] : full.replace('Week of ', '');
+  };
+  // A week with no score is NULL, never 0 — a zero used to draw a cliff to the
+  // floor AND drag the axis minimum down, flattening every real week above it.
+  const scorePts = weeks.map(w => ({val: (w.weekScore === null || w.weekScore === undefined) ? null : w.weekScore, label: wkLabel(w)}));
   html += '<div style="font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin-bottom:8px;margin-top:.5rem">Coaching Charts</div>';
   html += miniChart('Weekly Score (out of 35)', scorePts, 'var(--gold)', '', false, [{val:25, color:'var(--green-br)', label:'25'}]);
 
@@ -5267,14 +5287,14 @@ function buildTrendsSection(c) {
     const checkins = Object.values(w.checkins||{}).filter(Boolean);
     const hits = checkins.filter(c => c?.protein === true).length;
     const days = checkins.length || 1;
-    return {val: Math.round(hits/days*100), label:'W'+w.weekKey.slice(-2).replace('-','')};
+    return {val: checkins.length ? Math.round(hits/days*100) : null, label: wkLabel(w)};
   });
   html += miniChart('Protein Hit Rate (%)', proteinPts, '#f97316', '%', false, [{val:70, color:'var(--green-br)', label:'70%'}]);
 
   // NUTRIREADER AVERAGE
   const nutriPts = weeks.map(w => ({
     val: w.avgNutriScore || null,
-    label: 'W'+w.weekKey.slice(-2).replace('-','')
+    label: wkLabel(w)
   })).filter(p => p.val !== null);
   if (nutriPts.length) {
     html += miniChart('NutriReader Avg Score', nutriPts, 'var(--green-br)', '/10', false, [{val:7, color:'var(--gold)', label:'7'}]);
@@ -5284,7 +5304,7 @@ function buildTrendsSection(c) {
   const energyPts = weeks.map(w => {
     const checkins = Object.values(w.checkins||{}).filter(c => c?.energy);
     const avg = checkins.length ? Math.round(checkins.reduce((s,c)=>s+(c.energy||5),0)/checkins.length) : null;
-    return {val:avg, label:'W'+w.weekKey.slice(-2).replace('-','')};
+    return {val:avg, label:wkLabel(w)};
   }).filter(p=>p.val!==null);
   if (energyPts.length) {
     html += miniChart('Avg Energy Score', energyPts, '#60a5fa', '/10', false, [{val:7, color:'var(--gold)', label:'7'}]);
@@ -5305,7 +5325,7 @@ function buildTrendsSection(c) {
           }
         });
       });
-      slotPts.push({val: found ? parseFloat(found.weight) : null, label:'W'+w.weekKey.slice(-2).replace('-','')});
+      slotPts.push({val: found ? parseFloat(found.weight) : null, label:wkLabel(w)});
     });
     const validPts = slotPts.filter(p => p.val !== null);
     if (validPts.length >= 2) {
@@ -5358,8 +5378,8 @@ function buildTrendsSection(c) {
 
   // Adherence — weekly scores as % of 35
   const adherencePts = weeks.map(w => ({
-    val: Math.round((w.weekScore||0)/35*100),
-    label: 'W'+w.weekKey.slice(-2).replace('-','')
+    val: (w.weekScore === null || w.weekScore === undefined) ? null : Math.round(w.weekScore/35*100),
+    label: wkLabel(w)
   }));
   if (adherencePts.length >= 2) {
     html += miniChart('Behavioral Adherence (%)', adherencePts, 'var(--green-br)', '%', false, [
@@ -5369,18 +5389,23 @@ function buildTrendsSection(c) {
 
   // Functional capacity — fitness benchmarks table if both intake and latest
   const fc = [
-    {key:'kbdl', label:'KB Deadlift'},
-    {key:'pushups', label:'Push-Ups'},
-    {key:'plank', label:'Plank'},
-    {key:'row', label:'500m Row'},
+    {key:'kbdl', label:'KB Deadlift', lowerBetter:false},
+    {key:'pushups', label:'Push-Ups', lowerBetter:false},
+    {key:'plank', label:'Plank', lowerBetter:false},
+    {key:'row', label:'500m Row', lowerBetter:true},   // seconds — FASTER is better
   ];
   const fcIntake = m.intake || {};
   const fcLatest = m.week8 || m.week4 || {};
   const fcRows = fc.map(f => {
     const iv = fcIntake[f.key], lv = fcLatest[f.key];
     if (!iv && !lv) return '';
-    const change = iv && lv ? parseFloat(lv) - parseFloat(iv) : null;
-    const col = change !== null ? (change > 0 ? 'var(--green-br)' : 'var(--red)') : 'var(--dim)';
+    // iv/lv truthiness would drop a legitimate ZERO at intake (0 push-ups is a
+    // real Comeback starting point) — compare against null explicitly.
+    const ivN = (iv === undefined || iv === null || iv === '') ? null : parseFloat(iv);
+    const lvN = (lv === undefined || lv === null || lv === '') ? null : parseFloat(lv);
+    const change = (ivN !== null && lvN !== null && !isNaN(ivN) && !isNaN(lvN)) ? lvN - ivN : null;
+    const improved = change === null ? null : (f.lowerBetter ? change < 0 : change > 0);
+    const col = change === null ? 'var(--dim)' : change === 0 ? 'var(--dim-2)' : improved ? 'var(--green-br)' : 'var(--red)';
     return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">
       <div style="font-size:10px;color:var(--dim-2);min-width:80px">${f.label}</div>
       <div style="flex:1;height:6px;background:var(--black-2);border-radius:3px;overflow:hidden">
