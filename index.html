@@ -4643,7 +4643,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=39';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=40';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4828,7 +4828,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=39',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=40',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -6702,12 +6702,57 @@ function queueCloudMirror(data) {
   }, 3000);
 }
 
+// Read just the metadata (never the 1.2MB blob) so the guard is cheap.
+async function cloudFetchMeta() {
+  const sb = sbClient(); if (!sb) return null;
+  const { data: sess } = await sb.auth.getSession();
+  if (!sess || !sess.session || !sess.session.user) return null;
+  const { data, error } = await sb.from('coach_backups')
+    .select('client_count,size_bytes,updated_at').eq('owner', sess.session.user.id).maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+// Pull the full row. apply=false is the "look but do not touch" path used by
+// Verify Restore — it never writes to localStorage.
+async function cloudPull(apply) {
+  const sb = sbClient(); if (!sb) throw new Error('Supabase not loaded');
+  const { data: sess } = await sb.auth.getSession();
+  if (!sess || !sess.session || !sess.session.user) throw new Error('Not signed in');
+  const { data, error } = await sb.from('coach_backups')
+    .select('data,client_count,size_bytes,updated_at').eq('owner', sess.session.user.id).maybeSingle();
+  if (error) throw error;
+  if (!data || !data.data) return null;
+  if (apply) { _cloudSynced = true; _cloudBlocked = null; saveDb(data.data); }
+  return data;
+}
+
+// True once this device has pulled from, or knowingly overwritten, the cloud.
+// Until then the guard refuses to let a smaller local copy clobber a bigger
+// cloud one — the failure mode where you open the OS on a second device, it is
+// empty, you add one client, and eight get overwritten.
+let _cloudSynced = false;
+let _cloudBlocked = null;
+
 async function mirrorToCloud(data) {
   try {
     const sb = sbClient(); if (!sb) return;
     const { data: sess } = await sb.auth.getSession();
     if (!sess || !sess.session || !sess.session.user) { setCloudDot('off','Cloud Backup','Not signed in — tap to connect'); return; }
     const owner = sess.session.user.id;
+    // ── GUARD ── never silently shrink the cloud copy.
+    if (!_cloudSynced) {
+      let meta = null;
+      try { meta = await cloudFetchMeta(); } catch(e) { meta = null; }
+      const incoming = (data.clients||[]).length;
+      if (meta && typeof meta.client_count === 'number' && meta.client_count > incoming) {
+        _cloudBlocked = { cloud: meta.client_count, local: incoming, at: meta.updated_at };
+        setCloudDot('off', 'Backup paused', 'Cloud has ' + meta.client_count + ' clients, this device has ' + incoming + ' — tap to resolve');
+        console.warn('cloud mirror BLOCKED: refusing to overwrite ' + meta.client_count + ' clients with ' + incoming);
+        return;
+      }
+      _cloudSynced = true;
+    }
     const json = JSON.stringify(data);
     const row = { owner: owner, data: data, client_count: (data.clients||[]).length,
                   size_bytes: json.length, updated_at: new Date().toISOString() };
@@ -6725,6 +6770,7 @@ function openCloudModal() {
   const last = cloudLastOk();
   const sb = sbClient();
   const status = !sb ? '<div style="background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.2);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--red)">Supabase library did not load — check your connection and reload.</div>'
+    : _cloudBlocked ? '<div style="background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.25);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--red);line-height:1.7"><strong>Backup paused to protect your data.</strong><br>Your cloud copy has ' + _cloudBlocked.cloud + ' clients; this device has ' + _cloudBlocked.local + '. Nothing was overwritten.<br>Use <strong>Verify Restore</strong> to see what is in the cloud, then either restore it onto this device or press Back Up Now to deliberately replace it.</div>'
     : last && last.ok ? '<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--green)">Last copy saved ' + new Date(last.at).toLocaleString() + (last.clients!=null?' · '+last.clients+' clients · '+Math.round((last.bytes||0)/1024)+' KB':'') + '</div>'
     : '<div style="background:rgba(201,162,39,.06);border:1px solid rgba(201,162,39,.15);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--dim-2)">Not connected yet. Sign in once on this device and every save is copied automatically.</div>';
   document.getElementById('measureModal').innerHTML =
@@ -6740,6 +6786,8 @@ function openCloudModal() {
     + '<div id="sbMsg" style="font-size:12px;color:var(--dim);margin-bottom:10px"></div>'
     + '<button onclick="cloudSignIn()" style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:10px;color:var(--black);font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer">Connect</button>'
     + '<button onclick="cloudBackupNow()" style="width:100%;padding:11px;margin-top:8px;background:var(--black-4);border:1px solid var(--border-2);border-radius:10px;color:var(--dim-2);font-family:Barlow Condensed,sans-serif;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:pointer">Back Up Now</button>'
+    + '<button onclick="verifyRestore()" style="width:100%;padding:11px;margin-top:8px;background:var(--black-4);border:1px solid rgba(34,197,94,.3);border-radius:10px;color:var(--green-br);font-family:Barlow Condensed,sans-serif;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:pointer">Verify Restore (safe — reads only)</button>'
+    + '<button onclick="cloudRestoreNow()" style="width:100%;padding:11px;margin-top:8px;background:var(--black-4);border:1px solid rgba(220,38,38,.3);border-radius:10px;color:var(--red);font-family:Barlow Condensed,sans-serif;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:pointer">Restore Cloud Copy Onto This Device</button>'
     + '<button onclick="cloudSignOut()" style="width:100%;padding:9px;margin-top:8px;background:none;border:none;color:var(--dim);font-size:11px;cursor:pointer">Sign out of this device</button>'
     + '</div></div>';
   document.getElementById('measureModal').classList.add('active');
@@ -6768,6 +6816,13 @@ async function cloudSignIn() {
 
 async function cloudBackupNow() {
   const msg = document.getElementById('sbMsg');
+  // Pressing this button IS the deliberate override of the shrink guard.
+  if (_cloudBlocked) {
+    if (!confirm('Your cloud copy has ' + _cloudBlocked.cloud + ' client(s); this device has ' + _cloudBlocked.local +
+                 '.\n\nBacking up now REPLACES the cloud copy with this device\'s data.\n\nContinue?')) return;
+    _cloudBlocked = null;
+  }
+  _cloudSynced = true;
   if (msg) { msg.textContent = 'Backing up…'; msg.style.color = 'var(--dim)'; }
   await mirrorToCloud(db());
   const last = cloudLastOk();
@@ -6776,13 +6831,86 @@ async function cloudBackupNow() {
              msg.style.color = last && last.ok ? 'var(--green-br)' : 'var(--red)'; }
 }
 
+// Proves the backup is real WITHOUT touching local data — the difference
+// between a mirror and a backup you can actually trust.
+async function verifyRestore() {
+  const msg = document.getElementById('sbMsg');
+  if (msg) { msg.textContent = 'Reading cloud copy…'; msg.style.color = 'var(--dim)'; }
+  try {
+    const row = await cloudPull(false);
+    if (!row) { if(msg){msg.textContent='No backup found in the cloud yet.';msg.style.color='var(--red)';} return; }
+    const cs = (row.data.clients||[]);
+    const names = cs.slice(0,12).map(function(c){return c.name;}).join(', ');
+    const weeks = cs.reduce(function(a,c){return a+((c.weeklyData||[]).length);},0);
+    if (msg) {
+      msg.innerHTML = '<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);border-radius:8px;padding:10px 12px;color:var(--green-br);line-height:1.7">'
+        + '<strong>Backup verified</strong><br>'
+        + cs.length + ' clients · ' + weeks + ' recorded weeks · ' + Math.round((row.size_bytes||0)/1024) + ' KB<br>'
+        + 'Saved ' + new Date(row.updated_at).toLocaleString() + '<br>'
+        + '<span style="color:var(--dim-2);font-size:11px">' + names + (cs.length>12?' …':'') + '</span><br>'
+        + '<span style="color:var(--dim);font-size:11px">Nothing on this device was changed.</span></div>';
+    }
+  } catch (e) {
+    if (msg) { msg.textContent = 'Verify failed: ' + (e && e.message ? e.message : 'unknown'); msg.style.color = 'var(--red)'; }
+  }
+}
+
+// Explicit, confirmed, destructive-to-local restore.
+async function cloudRestoreNow() {
+  const msg = document.getElementById('sbMsg');
+  try {
+    const row = await cloudPull(false);
+    if (!row) { if(msg){msg.textContent='No backup found in the cloud yet.';msg.style.color='var(--red)';} return; }
+    const n = (row.data.clients||[]).length, localN = (db().clients||[]).length;
+    if (!confirm('Replace this device\'s data with the cloud copy?\n\nCloud: ' + n + ' client(s), saved '
+      + new Date(row.updated_at).toLocaleString() + '\nThis device: ' + localN + ' client(s)\n\nThis cannot be undone.')) return;
+    await cloudPull(true);
+    toast('Restored ' + n + ' client(s) from cloud');
+    document.getElementById('measureModal').classList.remove('active');
+    renderDashboard(); nav('dashboard');
+  } catch (e) {
+    if (msg) { msg.textContent = 'Restore failed: ' + (e && e.message ? e.message : 'unknown'); msg.style.color = 'var(--red)'; }
+  }
+}
+
 async function cloudSignOut() {
   try { const sb = sbClient(); if (sb) await sb.auth.signOut(); } catch(e) {}
-  setCloudLast(null); try { localStorage.removeItem(SB_LAST); } catch(e) {}
+  setCloudLast(null); _cloudSynced = false; _cloudBlocked = null; try { localStorage.removeItem(SB_LAST); } catch(e) {}
   refreshCloudDot(); toast('Signed out of cloud backup');
 }
 
 window.addEventListener('load', function(){ try { refreshCloudDot(); } catch(e) {} });
+
+// READ-ON-EMPTY / STALENESS — runs after init has painted. Never silent: an
+// empty device offers to restore, a stale device offers to refresh. Declining
+// leaves the guard armed, so a decline can still never clobber the cloud.
+window.addEventListener('load', function(){ setTimeout(async function(){
+  try {
+    const sb = sbClient(); if (!sb) return;
+    const { data: sess } = await sb.auth.getSession();
+    if (!sess || !sess.session || !sess.session.user) return;
+    const meta = await cloudFetchMeta(); if (!meta) return;
+    const localCount = (db().clients||[]).length;
+    const when = meta.updated_at ? new Date(meta.updated_at).toLocaleString() : 'unknown';
+    if (localCount === 0 && meta.client_count > 0) {
+      if (confirm('This device has no clients.\n\nYour cloud backup has ' + meta.client_count +
+                  ' client(s), saved ' + when + '.\n\nLoad them onto this device?')) {
+        await cloudPull(true); toast('Restored ' + meta.client_count + ' client(s) from cloud');
+        renderDashboard(); nav('dashboard');
+      }
+      return;
+    }
+    const last = cloudLastOk();
+    const cloudMs = meta.updated_at ? new Date(meta.updated_at).getTime() : 0;
+    if (localCount > 0 && cloudMs && (!last || cloudMs > (last.at || 0) + 60000) && meta.client_count > localCount) {
+      if (confirm('Your cloud backup is newer than this device.\n\nCloud: ' + meta.client_count +
+                  ' client(s), saved ' + when + '\nThis device: ' + localCount + ' client(s)\n\n' +
+                  'Load the cloud copy? (Your current data on this device will be replaced.)')) {
+        await cloudPull(true); toast('Loaded cloud copy'); renderDashboard(); nav('dashboard');
+      }
+    }
+  } catch(e) { console.warn('cloud sync check skipped:', e && e.message); }
+}, 1200); });
 
 window.addEventListener('load', init);
 </script>
