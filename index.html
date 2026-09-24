@@ -4635,7 +4635,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=35';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=36';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4820,7 +4820,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=35',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=36',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5415,6 +5415,10 @@ function editClient(clientId) {
     + '<div style="flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1.25rem 1.5rem;overscroll-behavior:contain;touch-action:pan-y">'
     + '<div class="form-field"><div class="form-label">Name</div><input id="edit-name" class="form-input" value="' + (c.name||'') + '"></div>'
     + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
+    + '<div class="form-field"><div class="form-label">Email</div><input id="edit-email" class="form-input" type="email" placeholder="client@email.com" value="' + (c.email||'') + '"></div>'
+    + '<div class="form-field"><div class="form-label">Phone</div><input id="edit-phone" class="form-input" type="tel" placeholder="(555) 555-5555" value="' + (c.phone||'') + '"></div>'
+    + '</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
     + '<div class="form-field"><div class="form-label">Age</div><input id="edit-age" class="form-input" type="number" value="' + (c.age||'') + '"></div>'
     + '<div class="form-field"><div class="form-label">Gender</div><select id="edit-gender" class="form-input"><option value="M"' + (c.gender==='M'?' selected':'') + '>Male</option><option value="F"' + (c.gender==='F'?' selected':'') + '>Female</option></select></div>'
     + '</div>'
@@ -5450,6 +5454,8 @@ function saveEditClient(clientId) {
   const newFlags = [...document.querySelectorAll('#measureModal .flag-chip.on')].map(el => el.dataset.flag);
 
   c.name    = document.getElementById('edit-name').value.trim() || c.name;
+  c.email   = document.getElementById('edit-email').value.trim();
+  c.phone   = document.getElementById('edit-phone').value.trim();
   c.age     = document.getElementById('edit-age').value || c.age;
   c.gender  = document.getElementById('edit-gender').value || c.gender || 'M';
   c.avatar  = newAv;
