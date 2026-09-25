@@ -926,6 +926,38 @@ async function sweepInboxes(opts) {
 }
 window.addEventListener('DOMContentLoaded', () => sweepInboxes());
 
+// ── AUTO-SWEEP ────────────────────────────────────────────────────────
+// The mailbox was only ever swept on page load, so a check-in sat in the cloud
+// until the coach happened to refresh. Poll while the tab is OPEN and VISIBLE.
+// Deliberately conservative:
+//   - visible tabs only (a backgrounded tab burns requests for nothing, and
+//     mobile browsers throttle timers there anyway)
+//   - never overlaps itself (_sweeping guard) — sweepInboxes ACKs and clears
+//     mailboxes server-side, so two in flight could race an ack against a save
+//   - silent: no toast unless something actually arrived (sweepInboxes already
+//     only toasts on imported > 0), and never a failure toast
+//   - sweeps immediately on tab re-focus, so coming back to the tab is instant
+const SWEEP_MS = 75000;   // 75s — under the prompt-cache-ish cadence, cheap
+let _sweeping = false, _sweepTimer = null;
+
+async function autoSweep(reason) {
+  if (_sweeping) return;
+  if (document.hidden) return;
+  if (!(db().clients || []).length) return;
+  _sweeping = true;
+  try { await sweepInboxes(); }
+  catch (e) { console.warn('auto-sweep skipped:', e && e.message); }
+  finally { _sweeping = false; }
+}
+
+function startAutoSweep() {
+  if (_sweepTimer) clearInterval(_sweepTimer);
+  _sweepTimer = setInterval(() => autoSweep('interval'), SWEEP_MS);
+}
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden) autoSweep('focus'); });
+window.addEventListener('load', startAutoSweep);
+
 // ══════════════════════════════════════════════════════════════════
 // PSS — PERFORMANCE SCORING SYSTEM
 // ══════════════════════════════════════════════════════════════════
@@ -4654,7 +4686,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=44';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=45';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4839,7 +4871,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=44',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=45',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
