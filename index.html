@@ -1408,6 +1408,26 @@ function renderDashboard() {
     const m = c.measurements || {};
     const latest = m.week8 || m.week4 || m.intake;
 
+    // 0. PAIN — a client said something hurt. Outranks every other signal,
+    // including cardiovascular: it is the most actionable thing on the page and
+    // it is time-sensitive. Scans the two most recent weeks only.
+    const recentWks = (c.weeklyData || []).slice().sort((a,b) => a.weekKey < b.weekKey ? 1 : -1).slice(0, 2);
+    const painHits = [], modHits = [], swaps = [];
+    recentWks.forEach(w => {
+      Object.entries(w.slotLogs || {}).forEach(([sessId, slots]) => {
+        Object.entries(slots || {}).forEach(([key, log]) => {
+          if (key.startsWith('_') || !log) return;
+          const what = log.exercise || log.prescribed || ('Slot ' + key.charAt(0));
+          if (log.pain) painHits.push(what + (log.note ? ' — "' + log.note + '"' : ''));
+          else if (log.modified) modHits.push(what);
+          if (log.exercise && log.prescribed && log.exercise !== log.prescribed) swaps.push(log.prescribed + ' → ' + log.exercise);
+        });
+      });
+    });
+    if (painHits.length) add(c, -1, 'PAIN', 'var(--red)', painHits.slice(0,2).join(' · ') + (painHits.length > 2 ? ' +' + (painHits.length-2) + ' more' : ''));
+    else if (modHits.length) add(c, 4, 'MODIFIED', 'var(--gold)', modHits.slice(0,3).join(' · '));
+    if (swaps.length) add(c, 5, 'SWAPPED', 'var(--blue)', swaps.slice(0,2).join(' · '));
+
     // 1. Cardiovascular — clinical, always first.
     if (latest) {
       const pss = calcPSS(latest, c.gender);
@@ -4634,7 +4654,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=43';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=44';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4819,7 +4839,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=43',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=44',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5214,7 +5234,7 @@ function buildTrendsSection(c) {
     const segs = []; let cur = [];
     dataPoints.forEach((d, i) => {
       if (d.val === null || d.val === undefined || isNaN(d.val)) { if (cur.length) { segs.push(cur); cur = []; } return; }
-      cur.push({ x: xPct(i), y: yPct(d.val), val: d.val, i });
+      cur.push({ x: xPct(i), y: yPct(d.val), val: d.val, i, mode: d.mode || '', modeChanged: !!d.modeChanged });
     });
     if (cur.length) segs.push(cur);
     const pts = segs.flat();
@@ -5240,8 +5260,13 @@ function buildTrendsSection(c) {
     const step = pts.length > 8 ? 3 : pts.length > 5 ? 2 : 1;
     const dots = pts.map((p, n) => {
       const show = n === 0 || n === pts.length - 1 || n % step === 0;
-      return `<div style="position:absolute;left:${p.x}%;top:${p.y}%;transform:translate(-50%,-50%);width:6px;height:6px;border-radius:50%;background:${color}"></div>`
-        + (show ? `<div style="position:absolute;left:${p.x}%;top:${p.y}%;transform:translate(-50%,-160%);font-size:8px;color:var(--dim-2);white-space:nowrap">${p.val}${unit}</div>` : '');
+      // A point whose MODE differs from the previous one is marked with a ring
+      // and its mode label: 140lb of dumbbells is not 140 on a bar, so the
+      // trend is drawn but the switch is never hidden inside it.
+      const sw = p.modeChanged;
+      return `<div style="position:absolute;left:${p.x}%;top:${p.y}%;transform:translate(-50%,-50%);width:${sw?10:6}px;height:${sw?10:6}px;border-radius:50%;background:${sw?'var(--black-3)':color};border:${sw?'2px solid '+color:'none'};box-sizing:border-box"></div>`
+        + (show ? `<div style="position:absolute;left:${p.x}%;top:${p.y}%;transform:translate(-50%,-160%);font-size:8px;color:var(--dim-2);white-space:nowrap">${p.val}${unit}</div>` : '')
+        + (sw && p.mode ? `<div style="position:absolute;left:${p.x}%;top:${p.y}%;transform:translate(-50%,80%);font-size:7px;color:${color};opacity:.9;white-space:nowrap;background:var(--black-3);padding:0 3px;border-radius:3px">${p.mode}</div>` : '');
     }).join('');
     const axis = dataPoints.map((d, i) =>
       `<div style="position:absolute;left:${xPct(i)}%;transform:translateX(-50%);font-size:8px;color:var(--dim);white-space:nowrap">${d.label}</div>`).join('');
@@ -5310,27 +5335,49 @@ function buildTrendsSection(c) {
     html += miniChart('Avg Energy Score', energyPts, '#60a5fa', '/10', false, [{val:7, color:'var(--gold)', label:'7'}]);
   }
 
-  // PROGRESSIVE OVERLOAD — top set per slot across weeks
+  // PROGRESSIVE OVERLOAD — top set per slot across weeks.
+  // Now plotted on TOTAL LOAD (v=43 capture): dumbbells entered per hand are
+  // doubled, so a barbell->dumbbell switch no longer reads as a collapse. Where
+  // no modality was recorded (logs predating v=43) it falls back to raw weight.
+  // BODYWEIGHT slots chart REPS instead — load is not the progression there and
+  // a bodyweight line would sit flat at zero forever.
   const slotColors = {A:'var(--gold)',B:'#f97316',C:'#60a5fa',D:'var(--green-br)',E:'#a855f7',F:'#ec4899'};
+  const loadOf = log => {
+    if (log.totalLoad !== undefined && log.totalLoad !== null && !isNaN(log.totalLoad)) return parseFloat(log.totalLoad);
+    const w = parseFloat(log.weight);
+    if (isNaN(w)) return null;
+    return log.perSide ? w * 2 : w;   // older logs that captured perSide but no total
+  };
   let slotHtml = '';
   ['A','B','C','D','E','F'].forEach(letter => {
-    const slotPts = [];
-    weeks.forEach(w => {
+    const rows = weeks.map(w => {
       const logs = w.slotLogs || {};
-      let found = null;
+      let best = null, bestVal = null, bw = false;
       Object.entries(logs).forEach(([sessId, slots]) => {
         Object.entries(slots).forEach(([key, log]) => {
-          if (key.startsWith(letter) && log.weight && !isNaN(parseFloat(log.weight))) {
-            if (!found || parseFloat(log.weight) > parseFloat(found.weight)) found = log;
-          }
+          if (!key.startsWith(letter) || !log || key.startsWith('_')) return;
+          const isBW = String(log.mode||'').toLowerCase() === 'bodyweight';
+          const val = isBW ? parseFloat(log.reps) : loadOf(log);
+          if (val === null || isNaN(val)) return;
+          if (bestVal === null || val > bestVal) { bestVal = val; best = log; bw = isBW; }
         });
       });
-      slotPts.push({val: found ? parseFloat(found.weight) : null, label:wkLabel(w)});
+      return { val: bestVal, mode: best ? (best.mode||'') : '', bw, label: wkLabel(w) };
     });
-    const validPts = slotPts.filter(p => p.val !== null);
-    if (validPts.length >= 2) {
-      slotHtml += miniChart(`Slot ${letter} — Top Set Weight`, slotPts, slotColors[letter]||'var(--gold)', ' lbs', false, []);
-    }
+    const valid = rows.filter(r => r.val !== null);
+    if (valid.length < 2) return;
+    // Mark each point whose modality differs from the previous recorded one.
+    let prevMode = null;
+    rows.forEach(r => {
+      if (r.val === null) return;
+      if (r.mode && prevMode && r.mode !== prevMode) r.modeChanged = true;
+      if (r.mode) prevMode = r.mode;
+    });
+    const anyBW = valid.some(r => r.bw);
+    const modes = [...new Set(valid.map(r => r.mode).filter(Boolean))];
+    const title = `Slot ${letter} — ` + (anyBW && modes.length === 1 ? 'Top Set Reps' : 'Top Set Load')
+      + (modes.length > 1 ? ' (modality changed)' : '');
+    slotHtml += miniChart(title, rows, slotColors[letter]||'var(--gold)', anyBW && modes.length === 1 ? ' reps' : ' lbs', false, []);
   });
 
   if (slotHtml) {
