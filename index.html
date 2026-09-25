@@ -693,6 +693,18 @@ function db() {
   try { return JSON.parse(localStorage.getItem(DB_KEY)) || { clients: [] }; }
   catch(e) { return { clients: [] }; }
 }
+// Escape anything the COACH or a CLIENT typed before it goes into HTML.
+// Without this a client named `test<div` renders as "test" and silently
+// swallows every card after it — and since v=43 clients can type slot notes
+// and exercise swaps that render on the coach's dashboard, a client could
+// break the Coach OS by typing a "<".
+function esc(v) {
+  if (v === null || v === undefined) return '';
+  return String(v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function saveDb(data) {
   try {
     localStorage.setItem(DB_KEY, JSON.stringify(data));
@@ -1529,9 +1541,9 @@ function renderDashboard() {
           : '<span class="btn sm" style="opacity:.35;cursor:not-allowed" title="No phone number on file — add one in Edit">Text</span>';
         return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border)">'
           + '<div style="min-width:74px"><span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.08em;color:' + n.tagCol + '">' + n.tag + '</span></div>'
-          + '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--white)">' + (c.name||'—') + '</div>'
-          + '<div style="font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + n.why
-          + (n.extra.length ? ' <span style="color:var(--dim);opacity:.7">· also ' + n.extra.join(' · ') + '</span>' : '') + '</div></div>'
+          + '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--white)">' + esc(c.name||'—') + '</div>'
+          + '<div style="font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(n.why)
+          + (n.extra.length ? ' <span style="color:var(--dim);opacity:.7">· also ' + esc(n.extra.join(' · ')) + '</span>' : '') + '</div></div>'
           + '<div class="btn-row" style="flex-shrink:0">' + sms
           + '<button class="btn sm" onclick="nav(\'profile\',\'' + c.id + '\')">Open</button></div></div>';
       }).join('')
@@ -1561,15 +1573,15 @@ function clientCard(c) {
       <div class="client-card-top">
         <div class="client-avatar-badge" style="background:${avColor(c.avatar)}">${avIcon(c.avatar)}</div>
         <div>
-          <div class="client-name">${c.name}</div>
-          <div class="client-avatar-name">${c.avatar}</div>
+          <div class="client-name">${esc(c.name)}</div>
+          <div class="client-avatar-name">${esc(c.avatar)}</div>
         </div>
         ${unread > 0 ? `<span style="margin-left:auto;background:var(--gold);color:var(--black);font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.06em;border-radius:20px;padding:2px 9px;white-space:nowrap">${unread} new</span>` : ''}
       </div>
       <div class="client-meta">
-        <span class="meta-tag">${c.level}</span>
-        <span class="meta-tag">${c.freq}</span>
-        <span class="meta-tag">${c.goal}</span>
+        <span class="meta-tag">${esc(c.level)}</span>
+        <span class="meta-tag">${esc(c.freq)}</span>
+        <span class="meta-tag">${esc(c.goal)}</span>
         ${progCount > 0 ? `<span class="meta-tag green">${progCount} program${progCount!==1?'s':''}</span>` : ''}
       </div>
       <div class="client-last">Last seen: ${lastDate}</div>
@@ -1712,13 +1724,13 @@ function renderProfile(clientId) {
     <div class="profile-header">
       <div class="profile-avatar-big" style="background:${avColor(c.avatar)}">${avIcon(c.avatar)}</div>
       <div style="flex:1">
-        <div class="profile-name">${c.name}</div>
-        <div class="profile-avatar-label">${c.avatar} · ${c.level}</div>
+        <div class="profile-name">${esc(c.name)}</div>
+        <div class="profile-avatar-label">${esc(c.avatar)} · ${esc(c.level)}</div>
         <div class="profile-tags">
-          <span class="profile-tag">${c.freq}</span>
-          <span class="profile-tag">${c.goal}</span>
-          ${c.age ? `<span class="profile-tag">Age ${c.age}</span>` : ''}
-          ${c.flags.map(f => `<span class="profile-tag" style="color:var(--red);border-color:rgba(220,38,38,.2)">${f}</span>`).join('')}
+          <span class="profile-tag">${esc(c.freq)}</span>
+          <span class="profile-tag">${esc(c.goal)}</span>
+          ${c.age ? `<span class="profile-tag">Age ${esc(c.age)}</span>` : ''}
+          ${c.flags.map(f => `<span class="profile-tag" style="color:var(--red);border-color:rgba(220,38,38,.2)">${esc(f)}</span>`).join('')}
           ${c.clientType === 'cohort' && c.cohort ? `<span class="profile-tag" style="color:var(--gold);border-color:rgba(201,162,39,.3);background:var(--gold-dim)">⚡ ${c.cohort}</span>` : '<span class="profile-tag" style="color:var(--green-br);border-color:rgba(34,197,94,.2)">1-on-1</span>'}
           <span class="profile-tag">${progCount} program${progCount!==1?'s':''}</span>
         </div>
@@ -4686,7 +4698,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=45';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=46';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4871,7 +4883,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=45',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=46',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
