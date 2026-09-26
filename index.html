@@ -1445,7 +1445,18 @@ function renderDashboard() {
   const DAY = 86400000;
   const parseWk = k => { const m = /^week-(\d{4})-(\d{2})-(\d{2})$/.exec(k || ''); return m ? new Date(+m[1], +m[2]-1, +m[3]) : null; };
   const needs = [];
-  const add = (c, rank, tag, tagCol, why) => needs.push({ c, rank, tag, tagCol, why });
+  // kind = a STABLE id for the situation (not the tag, which carries a day
+  // count). sig = a fingerprint of the underlying facts, so a handled item
+  // comes back the moment the situation actually changes.
+  const add = (c, rank, tag, tagCol, why, kind, sig) => needs.push({ c, rank, tag, tagCol, why, kind, sig });
+  const HANDLED_DAYS = 7;   // a handled item resurfaces after a week regardless
+  const isHandled = (c, kind, sig) => {
+    const h = (c.attnDone || {})[kind];
+    if (!h) return false;
+    if (h.sig !== sig) return false;                       // situation changed
+    if (Date.now() - (h.at || 0) > HANDLED_DAYS * DAY) return false;
+    return true;
+  };
 
   clients.forEach(c => {
     if (c.status === 'inactive') return;
@@ -1468,9 +1479,9 @@ function renderDashboard() {
         });
       });
     });
-    if (painHits.length) add(c, -1, 'PAIN', 'var(--red)', painHits.slice(0,2).join(' · ') + (painHits.length > 2 ? ' +' + (painHits.length-2) + ' more' : ''));
-    else if (modHits.length) add(c, 4, 'MODIFIED', 'var(--gold)', modHits.slice(0,3).join(' · '));
-    if (swaps.length) add(c, 5, 'SWAPPED', 'var(--blue)', swaps.slice(0,2).join(' · '));
+    if (painHits.length) add(c, -1, 'PAIN', 'var(--red)', painHits.slice(0,2).join(' · ') + (painHits.length > 2 ? ' +' + (painHits.length-2) + ' more' : ''), 'pain', painHits.join('|'));
+    else if (modHits.length) add(c, 4, 'MODIFIED', 'var(--gold)', modHits.slice(0,3).join(' · '), 'modified', modHits.join('|'));
+    if (swaps.length) add(c, 5, 'SWAPPED', 'var(--blue)', swaps.slice(0,2).join(' · '), 'swapped', swaps.join('|'));
 
     // 1. Cardiovascular — clinical, always first.
     if (latest) {
@@ -1479,7 +1490,7 @@ function renderDashboard() {
         const bits = [];
         if (pss.rhrFlag && latest.rhr) bits.push('RHR ' + latest.rhr);
         if (pss.bpFlag && latest.bp) bits.push('BP ' + latest.bp);
-        add(c, 0, 'HEALTH FLAG', 'var(--red)', bits.join(' · ') || 'Review with client');
+        add(c, 0, 'HEALTH FLAG', 'var(--red)', bits.join(' · ') || 'Review with client', 'cardio', bits.join('|'));
       }
     }
 
@@ -1488,30 +1499,35 @@ function renderDashboard() {
     const startAt = (() => { const pr = (c.programs||[]).find(p => p.id === c.activeProgramId); return (pr && pr.date) || c.createdAt; })();
     if (ws.length) {
       const silent = Math.floor((Date.now() - ws[0]) / DAY);
-      if (silent >= 14)     add(c, 1, 'SILENT ' + silent + 'd', 'var(--red)', 'Last check-in ' + ws[0].toLocaleDateString('en-US',{month:'short',day:'numeric'}));
-      else if (silent >= 8) add(c, 3, 'QUIET ' + silent + 'd', 'var(--gold)', 'Last check-in ' + ws[0].toLocaleDateString('en-US',{month:'short',day:'numeric'}));
+      const sinceKey = ws[0].toISOString().slice(0,10);
+      if (silent >= 14)     add(c, 1, 'SILENT ' + silent + 'd', 'var(--red)', 'Last check-in ' + ws[0].toLocaleDateString('en-US',{month:'short',day:'numeric'}), 'quiet', sinceKey);
+      else if (silent >= 8) add(c, 3, 'QUIET ' + silent + 'd', 'var(--gold)', 'Last check-in ' + ws[0].toLocaleDateString('en-US',{month:'short',day:'numeric'}), 'quiet', sinceKey);
     } else if (startAt && (Date.now() - startAt) / DAY >= 10) {
-      add(c, 1, 'NEVER CHECKED IN', 'var(--red)', 'Started ' + Math.floor((Date.now()-startAt)/DAY) + ' days ago');
+      add(c, 1, 'NEVER CHECKED IN', 'var(--red)', 'Started ' + Math.floor((Date.now()-startAt)/DAY) + ' days ago', 'quiet', 'never');
     }
 
     // 3. No baseline — no progress story is possible without it.
     const mi = Array.isArray(m) ? null : m.intake;
-    if (!mi) add(c, 2, 'NO BASELINE', 'var(--red)', 'No intake measurements recorded');
+    if (!mi) add(c, 2, 'NO BASELINE', 'var(--red)', 'No intake measurements recorded', 'baseline', 'none');
     else {
       const missing = [];
       if (!mi.bodyfat) missing.push('Body Fat');
       if (!mi.smm) missing.push('Muscle Mass');
       if (!mi.waist) missing.push('Waist');
-      if (missing.length) add(c, 4, 'INTAKE GAPS', 'var(--gold)', 'Missing ' + missing.join(' · '));
+      if (missing.length) add(c, 4, 'INTAKE GAPS', 'var(--gold)', 'Missing ' + missing.join(' · '), 'gaps', missing.join('|'));
     }
 
     // 4. Retests due.
     if (startAt) {
       const d = (Date.now() - startAt) / DAY;
-      if (d >= 54 && !m.week8)      add(c, 3, 'WEEK 8 DUE', 'var(--gold)', 'Day ' + Math.floor(d) + ' — graduation retest');
-      else if (d >= 26 && !m.week4) add(c, 3, 'WEEK 4 DUE', 'var(--gold)', 'Day ' + Math.floor(d) + ' — mid-block retest');
+      if (d >= 54 && !m.week8)      add(c, 3, 'WEEK 8 DUE', 'var(--gold)', 'Day ' + Math.floor(d) + ' — graduation retest', 'retest', 'week8');
+      else if (d >= 26 && !m.week4) add(c, 3, 'WEEK 4 DUE', 'var(--gold)', 'Day ' + Math.floor(d) + ' — mid-block retest', 'retest', 'week4');
     }
   });
+
+  const handledNow = needs.filter(n => isHandled(n.c, n.kind, n.sig));
+  const openNeeds  = needs.filter(n => !isHandled(n.c, n.kind, n.sig));
+  needs.length = 0; Array.prototype.push.apply(needs, openNeeds);
 
   // ONE ROW PER PERSON. Ungrouped, a client with three issues appeared three
   // times and the list read as noise rather than a call sheet. Collapse to the
@@ -1519,9 +1535,10 @@ function renderDashboard() {
   const byClient = {};
   needs.forEach(n => {
     const k = n.c.id;
-    if (!byClient[k]) { byClient[k] = { c: n.c, rank: n.rank, tag: n.tag, tagCol: n.tagCol, why: n.why, extra: [] }; return; }
+    // kind/sig must ride through the grouping — the ✓ button is built from them.
+    if (!byClient[k]) { byClient[k] = { c: n.c, rank: n.rank, tag: n.tag, tagCol: n.tagCol, why: n.why, kind: n.kind, sig: n.sig, extra: [] }; return; }
     const g = byClient[k];
-    if (n.rank < g.rank) { g.extra.unshift(g.tag.toLowerCase()); g.rank = n.rank; g.tag = n.tag; g.tagCol = n.tagCol; g.why = n.why; }
+    if (n.rank < g.rank) { g.extra.unshift(g.tag.toLowerCase()); g.rank = n.rank; g.tag = n.tag; g.tagCol = n.tagCol; g.why = n.why; g.kind = n.kind; g.sig = n.sig; }
     else g.extra.push(n.tag.toLowerCase());
   });
   const rows = Object.values(byClient)
@@ -1535,9 +1552,12 @@ function renderDashboard() {
       + '<div style="font-size:10px;color:var(--dim)">' + rows.length + ' client' + (rows.length !== 1 ? 's' : '') + '</div></div>'
       + rows.map(n => {
         const c = n.c;
+        // Tapping Text IS the action, so it marks the item handled — that is
+        // what stops the same client sitting there after you have texted them.
+        const markCall = "markAttnDone('" + c.id + "','" + esc(n.kind) + "'," + JSON.stringify(n.sig) + ")";
         const sms = c.phone
-          ? '<a href="sms:' + c.phone + '?body=' + encodeURIComponent('Hey ' + (c.name||'').split(' ')[0] + ' — checking in. How did this week go?')
-            + '" onclick="event.stopPropagation()" class="btn sm" style="text-decoration:none;background:rgba(34,197,94,.1);color:var(--green-br);border-color:rgba(34,197,94,.25)">Text</a>'
+          ? '<a href="sms:' + esc(c.phone) + '?body=' + encodeURIComponent('Hey ' + (c.name||'').split(' ')[0] + ' — checking in. How did this week go?')
+            + '" onclick="event.stopPropagation();' + esc(markCall) + '" class="btn sm" style="text-decoration:none;background:rgba(34,197,94,.1);color:var(--green-br);border-color:rgba(34,197,94,.25)">Text</a>'
           : '<span class="btn sm" style="opacity:.35;cursor:not-allowed" title="No phone number on file — add one in Edit">Text</span>';
         return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border)">'
           + '<div style="min-width:74px"><span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.08em;color:' + n.tagCol + '">' + n.tag + '</span></div>'
@@ -1545,11 +1565,20 @@ function renderDashboard() {
           + '<div style="font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(n.why)
           + (n.extra.length ? ' <span style="color:var(--dim);opacity:.7">· also ' + esc(n.extra.join(' · ')) + '</span>' : '') + '</div></div>'
           + '<div class="btn-row" style="flex-shrink:0">' + sms
-          + '<button class="btn sm" onclick="nav(\'profile\',\'' + c.id + '\')">Open</button></div></div>';
+          + '<button class="btn sm" onclick="nav(\'profile\',\'' + c.id + '\')">Open</button>'
+          + '<button class="btn sm" title="Mark handled — hides this until the situation changes" onclick="event.stopPropagation();' + esc(markCall) + '" style="background:rgba(255,255,255,.04)">✓</button>'
+          + '</div></div>';
       }).join('')
       + '</div>';
   } else if (clients.length) {
     alertHtml += '<div style="background:rgba(34,197,94,.05);border:1px solid rgba(34,197,94,.15);border-radius:14px;padding:.9rem 1.25rem;margin-bottom:1.25rem;font-size:12px;color:var(--green-br)">Nothing needs you today. Everyone is checked in, measured and on schedule.</div>';
+  }
+  if (handledNow.length) {
+    const names = [...new Set(handledNow.map(h => h.c.name))];
+    alertHtml += '<div style="margin:-.75rem 0 1.25rem;padding:.5rem .75rem;font-size:11px;color:var(--dim)">'
+      + '✓ Handled: ' + esc(names.join(' · '))
+      + ' <span style="opacity:.6">— reappears if the situation changes, or after ' + HANDLED_DAYS + ' days.</span>'
+      + ' <span onclick="clearAttnDone()" style="color:var(--gold);cursor:pointer;text-decoration:underline">undo all</span></div>';
   }
   alertHtml += '</div>';
 
@@ -1562,6 +1591,25 @@ function renderDashboard() {
   } else {
     document.getElementById('recentClients').innerHTML = recent.map(c => clientCard(c)).join('');
   }
+}
+
+// Mark one call-sheet item handled. Stored per client so it survives reloads
+// and rides along in the cloud mirror.
+function markAttnDone(clientId, kind, sig) {
+  const data = db();
+  const c = (data.clients||[]).find(x => x.id === clientId);
+  if (!c) return;
+  if (!c.attnDone) c.attnDone = {};
+  c.attnDone[kind] = { at: Date.now(), sig: sig };
+  saveDb(data);
+  renderDashboard();
+}
+
+function clearAttnDone() {
+  const data = db();
+  (data.clients||[]).forEach(c => { delete c.attnDone; });
+  saveDb(data);
+  renderDashboard();
 }
 
 function clientCard(c) {
@@ -4698,7 +4746,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=46';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=47';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4883,7 +4931,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=46',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=47',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -6856,15 +6904,27 @@ async function mirrorToCloud(data) {
     const { data: sess } = await sb.auth.getSession();
     if (!sess || !sess.session || !sess.session.user) { setCloudDot('off','Cloud Backup','Not signed in — tap to connect'); return; }
     const owner = sess.session.user.id;
-    // ── GUARD ── never silently shrink the cloud copy.
+    // ── GUARD ── never overwrite work this device has not seen.
+    // v=40 compared CLIENT COUNTS only, which missed the case that actually
+    // matters: another device edits a client (a Week 4 retest, say) without
+    // changing the headcount. 8 is not > 8, so the stale device pushed straight
+    // over it. Compare RECENCY first; count is now a secondary signal.
     if (!_cloudSynced) {
       let meta = null;
       try { meta = await cloudFetchMeta(); } catch(e) { meta = null; }
       const incoming = (data.clients||[]).length;
-      if (meta && typeof meta.client_count === 'number' && meta.client_count > incoming) {
-        _cloudBlocked = { cloud: meta.client_count, local: incoming, at: meta.updated_at };
-        setCloudDot('off', 'Backup paused', 'Cloud has ' + meta.client_count + ' clients, this device has ' + incoming + ' — tap to resolve');
-        console.warn('cloud mirror BLOCKED: refusing to overwrite ' + meta.client_count + ' clients with ' + incoming);
+      const last = cloudLastOk();
+      const cloudStamp = meta && meta.updated_at ? meta.updated_at : null;
+      const oursStamp  = last && last.cloudAt ? last.cloudAt : null;
+      const cloudIsForeign = !!cloudStamp && (!oursStamp || cloudStamp !== oursStamp);
+      const shrinking = meta && typeof meta.client_count === 'number' && meta.client_count > incoming;
+      if (meta && (cloudIsForeign || shrinking)) {
+        _cloudBlocked = { cloud: meta.client_count, local: incoming, at: meta.updated_at,
+                          reason: cloudIsForeign ? 'newer' : 'fewer' };
+        setCloudDot('off', 'Backup paused',
+          (cloudIsForeign ? 'Cloud was changed by another device' : 'Cloud has ' + meta.client_count + ' clients, this device has ' + incoming)
+          + ' — tap to resolve');
+        console.warn('cloud mirror BLOCKED (' + _cloudBlocked.reason + '): cloud ' + cloudStamp + ' vs ours ' + oursStamp);
         return;
       }
       _cloudSynced = true;
@@ -6874,7 +6934,10 @@ async function mirrorToCloud(data) {
                   size_bytes: json.length, updated_at: new Date().toISOString() };
     const { error } = await sb.from('coach_backups').upsert(row, { onConflict: 'owner' });
     if (error) throw error;
-    setCloudLast({ ok: true, at: Date.now(), clients: row.client_count, bytes: row.size_bytes });
+    // cloudAt = the updated_at WE just wrote. If the cloud later reports a
+    // different one, another device has written since — the signal the old
+    // count-based guard could not see.
+    setCloudLast({ ok: true, at: Date.now(), clients: row.client_count, bytes: row.size_bytes, cloudAt: row.updated_at });
   } catch (e) {
     console.warn('cloud mirror failed (local save is unaffected):', e && e.message ? e.message : e);
     setCloudLast({ ok: false, at: Date.now() });
@@ -6886,7 +6949,11 @@ function openCloudModal() {
   const last = cloudLastOk();
   const sb = sbClient();
   const status = !sb ? '<div style="background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.2);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--red)">Supabase library did not load — check your connection and reload.</div>'
-    : _cloudBlocked ? '<div style="background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.25);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--red);line-height:1.7"><strong>Backup paused to protect your data.</strong><br>Your cloud copy has ' + _cloudBlocked.cloud + ' clients; this device has ' + _cloudBlocked.local + '. Nothing was overwritten.<br>Use <strong>Verify Restore</strong> to see what is in the cloud, then either restore it onto this device or press Back Up Now to deliberately replace it.</div>'
+    : _cloudBlocked ? '<div style="background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.25);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--red);line-height:1.7"><strong>Backup paused to protect your data.</strong><br>'
+      + (_cloudBlocked.reason === 'newer'
+          ? 'Your cloud copy was last saved from another device' + (_cloudBlocked.at ? ' at ' + new Date(_cloudBlocked.at).toLocaleString() : '') + ' (' + _cloudBlocked.cloud + ' clients); this device has ' + _cloudBlocked.local + '. It may contain work this device has not seen.'
+          : 'Your cloud copy has ' + _cloudBlocked.cloud + ' clients; this device has ' + _cloudBlocked.local + '.')
+      + '<br>Nothing was overwritten.<br>Use <strong>Verify Restore</strong> to see what is in the cloud, then either restore it onto this device or press Back Up Now to deliberately replace it.</div>'
     : last && last.ok ? '<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--green)">Last copy saved ' + new Date(last.at).toLocaleString() + (last.clients!=null?' · '+last.clients+' clients · '+Math.round((last.bytes||0)/1024)+' KB':'') + '</div>'
     : '<div style="background:rgba(201,162,39,.06);border:1px solid rgba(201,162,39,.15);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--dim-2)">Not connected yet. Sign in once on this device and every save is copied automatically.</div>';
   document.getElementById('measureModal').innerHTML =
@@ -6921,9 +6988,16 @@ async function cloudSignIn() {
     if (error) throw error;
     if (msg) { msg.textContent = 'Connected ✓ — backing up now…'; msg.style.color = 'var(--green-br)'; }
     await mirrorToCloud(db());
-    const last = cloudLastOk();
-    if (msg) { msg.textContent = last && last.ok ? 'Backed up ✓ ' + last.clients + ' clients saved to the cloud.' : 'Signed in, but the backup failed — check the table exists.';
-               msg.style.color = last && last.ok ? 'var(--green-br)' : 'var(--red)'; }
+    // Do NOT report success off cloudLastOk() — that is the last successful push
+    // from ANY device, so a BLOCKED push here rendered a green "Backed up, 10
+    // clients saved" directly under a red "Backup paused".
+    if (_cloudBlocked) {
+      if (msg) { msg.textContent = 'Signed in — but this device did not back up. See the notice above.'; msg.style.color = 'var(--gold)'; }
+    } else {
+      const last = cloudLastOk();
+      if (msg) { msg.textContent = last && last.ok ? 'Backed up ✓ ' + last.clients + ' clients saved to the cloud.' : 'Signed in, but the backup failed — check the table exists.';
+                 msg.style.color = last && last.ok ? 'var(--green-br)' : 'var(--red)'; }
+    }
   } catch (e) {
     if (msg) { msg.textContent = 'Could not connect: ' + (e && e.message ? e.message : 'unknown error'); msg.style.color = 'var(--red)'; }
     setCloudLast({ ok:false, at:Date.now() }); refreshCloudDot();
@@ -7016,12 +7090,15 @@ window.addEventListener('load', function(){ setTimeout(async function(){
       }
       return;
     }
+    // Offer to pull whenever the cloud was last written by a DIFFERENT device —
+    // not only when it has more clients. A Week 4 retest added on the phone does
+    // not change the headcount, and the old condition never fired for it.
     const last = cloudLastOk();
-    const cloudMs = meta.updated_at ? new Date(meta.updated_at).getTime() : 0;
-    if (localCount > 0 && cloudMs && (!last || cloudMs > (last.at || 0) + 60000) && meta.client_count > localCount) {
-      if (confirm('Your cloud backup is newer than this device.\n\nCloud: ' + meta.client_count +
+    const oursStamp = last && last.cloudAt ? last.cloudAt : null;
+    if (localCount > 0 && meta.updated_at && meta.updated_at !== oursStamp) {
+      if (confirm('Your cloud backup was last saved from another device.\n\nCloud: ' + meta.client_count +
                   ' client(s), saved ' + when + '\nThis device: ' + localCount + ' client(s)\n\n' +
-                  'Load the cloud copy? (Your current data on this device will be replaced.)')) {
+                  'Load the cloud copy onto this device?\n(Cancel keeps this device\'s copy — nothing is overwritten either way until you choose.)')) {
         await cloudPull(true); toast('Loaded cloud copy'); renderDashboard(); nav('dashboard');
       }
     }
