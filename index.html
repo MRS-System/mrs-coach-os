@@ -284,6 +284,9 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
       <div class="nav-item" onclick="nav('new-client')" id="nav-new-client">
         <span class="nav-icon">➕</span><span>New Client</span>
       </div>
+      <div class="nav-item" onclick="nav('challenge');renderChallengeBlocks()" id="nav-challenge">
+        <span class="nav-icon">🔥</span><span>28 Day Challenge</span>
+      </div>
       <div class="nav-item" onclick="nav('analytics')" id="nav-analytics">
         <span class="nav-icon">📊</span><span>Analytics</span>
       </div>
@@ -371,6 +374,11 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
         </div>
       </div>
 
+      <!-- ══ 28 DAY CHALLENGE BLOCKS ══ -->
+      <div class="screen" id="screen-challenge">
+        <div id="challengeContent"></div>
+      </div>
+
       <!-- ══ NEW CLIENT ══ -->
       <div class="screen" id="screen-new-client">
         <div class="card">
@@ -444,10 +452,11 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
             <div class="form-field" id="cohortFieldWrap" style="display:none">
               <div class="form-label">Cohort</div>
               <select id="nc-cohort">
-                <option value="">Select cohort...</option>
-                <option value="Ironman">⚡ Ironman — Thu 5:30am</option>
-                <option value="Built Different">🍑 Built Different — Wed 6:30pm</option>
-                <option value="Built To Last">🟡 Built To Last — Fri 10am / Wed 10am</option>
+                <option value="28 Day Challenge" selected>🔥 28 Day Challenge</option>
+              </select>
+              <div class="form-label" style="margin-top:.6rem">Challenge Block</div>
+              <select id="nc-block" onfocus="fillChallengeBlockPicker()" onmousedown="fillChallengeBlockPicker()">
+                <option value="">Select block...</option>
               </select>
             </div>
           </div>
@@ -500,7 +509,7 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
             <input type="text" id="nc-q7" placeholder="Consistency, knowledge, time, injury, motivation...">
           </div>
           <div class="btn-row">
-            <button class="btn gold full" onclick="saveNewClient()">SAVE CLIENT PROFILE →</button>
+            <button class="btn gold full" onclick="saveNewClientWithBlock()">SAVE CLIENT PROFILE →</button>
           </div>
         </div>
       </div>
@@ -4746,7 +4755,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=47';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=48';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4931,7 +4940,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=47',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=48',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -7104,6 +7113,260 @@ window.addEventListener('load', function(){ setTimeout(async function(){
     }
   } catch(e) { console.warn('cloud sync check skipped:', e && e.message); }
 }, 1200); });
+
+// ══════════════════════════════════════════════════════════════════
+// 28 DAY CHALLENGE BLOCKS (NEW, non-protected, additive only)
+// ══════════════════════════════════════════════════════════════════
+// A block is a group of challenge participants who share one Day 1. Blocks live
+// at db().challengeBlocks = [{id, name, createdAt, startDate:'YYYY-MM-DD'|null}];
+// a participant is a cohort client with cohort '28 Day Challenge' plus
+// c.challengeBlockId. Existing clients carry neither, so nothing here reaches
+// them. Participants get their portal data through buildChallengePortalProfile —
+// a SIBLING of buildPortalProfile (unedited) that adds the block info and aligns
+// the program start with the block's Day 1, so the portal's existing week
+// counter (inside the protected renderProgram) reads the block's week.
+const CHALLENGE_COHORT = '28 Day Challenge';
+const CHALLENGE_DAYS = 28;
+pageTitles['challenge'] = 'MRS™ <em>28 Day Challenge</em>';
+
+function isChallengeClient(c) {
+  return !!(c && c.clientType === 'cohort' && c.cohort === CHALLENGE_COHORT);
+}
+function challengeBlocks(data) {
+  return (data && Array.isArray(data.challengeBlocks)) ? data.challengeBlocks : [];
+}
+function challengeBlockFor(c, data) {
+  if (!c || !c.challengeBlockId) return null;
+  return challengeBlocks(data || db()).find(function(b){ return b.id === c.challengeBlockId; }) || null;
+}
+function challengeTodayYmd() {
+  var n = new Date();
+  return n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0') + '-' + String(n.getDate()).padStart(2,'0');
+}
+// Day number for a 'YYYY-MM-DD' start: 1 on the start date, <=0 before it.
+// Calendar-day math in UTC so a DST change never shifts the day.
+function challengeDayNumber(ymd) {
+  var p = String(ymd || '').split('-').map(Number);
+  if (p.length !== 3 || p.some(isNaN)) return null;
+  var n = new Date();
+  var start = Date.UTC(p[0], p[1]-1, p[2]);
+  var today = Date.UTC(n.getFullYear(), n.getMonth(), n.getDate());
+  return Math.floor((today - start) / 864e5) + 1;
+}
+function challengeYmdLabel(ymd) {
+  var p = String(ymd || '').split('-').map(Number);
+  if (p.length !== 3 || p.some(isNaN)) return '';
+  return new Date(p[0], p[1]-1, p[2]).toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' });
+}
+function challengeBlockStatus(b) {
+  if (!b.startDate) return { key:'draft', label:'Not started', color:'var(--dim)' };
+  var d = challengeDayNumber(b.startDate);
+  if (d < 1) return { key:'scheduled', label:'Starts ' + challengeYmdLabel(b.startDate), color:'var(--gold)' };
+  if (d > CHALLENGE_DAYS) return { key:'complete', label:'Complete', color:'var(--dim-2)' };
+  return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
+}
+function challengePortalUrl(blobId) {
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=48';
+}
+
+// Portal profile for a challenge participant: the standard profile plus the
+// block, with every program's start date set to the block's Day 1 once started.
+function buildChallengePortalProfile(c) {
+  var p = buildPortalProfile(c);
+  var b = challengeBlockFor(c);
+  p.challenge = b ? { blockId: b.id, blockName: b.name || '', startDate: b.startDate || null, days: CHALLENGE_DAYS } : null;
+  if (b && b.startDate) {
+    var d = b.startDate.split('-').map(Number);
+    var t = new Date(d[0], d[1]-1, d[2]).getTime();
+    p.programs = (p.programs || []).map(function(pr){ return Object.assign({}, pr, { date: t }); });
+  }
+  return p;
+}
+
+// PUT the challenge profile over the participant's existing ?p= blob.
+async function pushChallengeProfile(c) {
+  if (!c || !c.portalBlobId) return 'nolink';
+  try {
+    var res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile?id=' + encodeURIComponent(c.portalBlobId), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildChallengePortalProfile(c))
+    });
+    return res.ok ? 'pushed' : 'failed';
+  } catch(e) { return 'failed'; }
+}
+
+async function pushChallengeBlock(blockId) {
+  var data = db();
+  var people = (data.clients || []).filter(function(c){ return isChallengeClient(c) && c.challengeBlockId === blockId; });
+  var tally = { pushed:0, nolink:0, failed:0 };
+  for (var i = 0; i < people.length; i++) tally[await pushChallengeProfile(people[i])]++;
+  return tally;
+}
+function challengePushSummary(t) {
+  var parts = [t.pushed + ' portal' + (t.pushed === 1 ? '' : 's') + ' updated'];
+  if (t.nolink) parts.push(t.nolink + ' without a portal link yet');
+  if (t.failed) parts.push(t.failed + ' failed — tap Send to portals again');
+  return parts.join(' · ');
+}
+
+function fillChallengeBlockPicker() {
+  var sel = document.getElementById('nc-block');
+  if (!sel) return;
+  var keep = sel.value;
+  var open = challengeBlocks(db()).filter(function(b){ return challengeBlockStatus(b).key !== 'complete'; });
+  sel.innerHTML = '<option value="">' + (open.length ? 'Select block...' : 'No open blocks — create one on 28 Day Challenge') + '</option>'
+    + open.map(function(b){ return '<option value="' + esc(b.id) + '">' + esc(b.name) + ' — ' + esc(challengeBlockStatus(b).label) + '</option>'; }).join('');
+  if (keep && open.some(function(b){ return b.id === keep; })) sel.value = keep;
+  else if (open.length === 1) sel.value = open[0].id;
+}
+
+// Wraps saveNewClient (unedited): a challenge participant gets its block id
+// stamped on right after the standard save. 1-on-1 saves pass straight through.
+function saveNewClientWithBlock() {
+  var isCh = document.getElementById('nc-type').value === 'cohort' && document.getElementById('nc-cohort').value === CHALLENGE_COHORT;
+  var blockId = isCh ? (document.getElementById('nc-block').value || '') : '';
+  var before = (db().clients || []).length;
+  saveNewClient();
+  if (!isCh) return;
+  var data = db();
+  var list = data.clients || [];
+  if (list.length !== before + 1) return; // save was rejected (missing name/avatar)
+  list[list.length - 1].challengeBlockId = blockId;
+  saveDb(data);
+  if (!blockId) toast('Saved without a block — assign one on the 28 Day Challenge screen.');
+}
+
+function createChallengeBlock() {
+  var input = document.getElementById('chNewBlockName');
+  var name = input ? input.value.trim() : '';
+  if (!name) { toast('Give the block a name, e.g. "Oct 12 Block"'); return; }
+  var data = db();
+  if (!Array.isArray(data.challengeBlocks)) data.challengeBlocks = [];
+  data.challengeBlocks.push({ id: 'blk_' + Date.now(), name: name, createdAt: Date.now(), startDate: null });
+  saveDb(data);
+  toast(name + ' created ✓');
+  renderChallengeBlocks();
+  fillChallengeBlockPicker();
+}
+
+async function startChallengeBlock(blockId) {
+  var data = db();
+  var b = challengeBlocks(data).find(function(x){ return x.id === blockId; });
+  if (!b) return;
+  var input = document.getElementById('chStart-' + blockId);
+  var ymd = input ? input.value : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) { toast('Pick a Day 1 date first'); return; }
+  var count = (data.clients || []).filter(function(c){ return isChallengeClient(c) && c.challengeBlockId === blockId; }).length;
+  var verb = b.startDate ? 'Move Day 1 of ' : 'Start ';
+  if (!confirm(verb + b.name + ' to ' + challengeYmdLabel(ymd) + '?\n\nDay 1 for all ' + count + ' participant' + (count === 1 ? '' : 's') + ' will be ' + challengeYmdLabel(ymd) + ', and their portals will be updated.')) return;
+  b.startDate = ymd;
+  saveDb(data);
+  renderChallengeBlocks();
+  toast('Sending to portals…');
+  var t = await pushChallengeBlock(blockId);
+  toast(b.name + ': ' + challengePushSummary(t));
+  renderChallengeBlocks();
+}
+
+async function sendChallengeBlock(blockId) {
+  toast('Sending to portals…');
+  var t = await pushChallengeBlock(blockId);
+  toast(challengePushSummary(t));
+}
+
+function assignChallengeBlock(clientId, blockId) {
+  var data = db();
+  var c = (data.clients || []).find(function(x){ return x.id === clientId; });
+  if (!c) return;
+  c.challengeBlockId = blockId || '';
+  saveDb(data);
+  renderChallengeBlocks();
+  if (c.portalBlobId) pushChallengeProfile(c).then(function(r){ if (r === 'failed') toast('Portal update failed for ' + c.name + ' — tap Send to portals'); });
+}
+
+// Create a participant's ?p= link from the challenge profile, or (already
+// linked) push the latest profile and copy the existing link.
+async function challengeLink(clientId) {
+  var data = db();
+  var c = (data.clients || []).find(function(x){ return x.id === clientId; });
+  if (!c) return;
+  var url;
+  try {
+    if (c.portalBlobId) {
+      if (await pushChallengeProfile(c) === 'failed') throw new Error('push failed');
+      url = challengePortalUrl(c.portalBlobId);
+    } else {
+      url = await createShareLink(JSON.stringify(buildChallengePortalProfile(c)));
+      var pid = new URL(url).searchParams.get('p');
+      var d2 = db(); var c2 = (d2.clients || []).find(function(x){ return x.id === clientId; });
+      if (c2 && pid) { c2.portalBlobId = pid; saveDb(d2); }
+    }
+  } catch(e) { toast('Could not create the link — check connection and try again.'); return; }
+  var done = function(){ toast('Link for ' + c.name + ' copied ✓ — text it to them.'); };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(url);
+    else if (!legacyCopy(url)) throw new Error('copy');
+    done();
+  } catch(e) { if (legacyCopy(url)) done(); else prompt('Copy this link for ' + c.name + ':', url); }
+  renderChallengeBlocks();
+}
+
+function renderChallengeBlocks() {
+  var el = document.getElementById('challengeContent');
+  if (!el) return;
+  var data = db();
+  var blocks = challengeBlocks(data).slice().sort(function(a,b){ return (b.createdAt||0) - (a.createdAt||0); });
+  var people = (data.clients || []).filter(isChallengeClient);
+  var blockIds = blocks.map(function(b){ return b.id; });
+  var moveSelect = function(c) {
+    return '<select onchange="assignChallengeBlock(\'' + esc(c.id) + '\', this.value)" style="max-width:150px;padding:4px 6px;font-size:11px">'
+      + '<option value="">— No block —</option>'
+      + blocks.map(function(b){ return '<option value="' + esc(b.id) + '"' + (b.id === c.challengeBlockId ? ' selected' : '') + '>' + esc(b.name) + '</option>'; }).join('')
+      + '</select>';
+  };
+  var row = function(c) {
+    var hasProg = (c.programs || []).some(function(p){ return p.block1; });
+    return '<tr style="border-top:1px solid var(--border)">'
+      + '<td style="padding:8px 6px"><a href="#" onclick="nav(\'profile\',\'' + esc(c.id) + '\');return false" style="color:var(--white);font-weight:600;text-decoration:none">' + esc(c.name) + '</a><div style="font-size:10px;color:var(--dim)">' + esc(c.avatar || '') + '</div></td>'
+      + '<td style="padding:8px 6px;font-size:11px;color:' + (hasProg ? 'var(--green-br)' : 'var(--red)') + '">' + (hasProg ? '✓ Program' : 'No program yet') + '</td>'
+      + '<td style="padding:8px 6px;font-size:11px;color:' + (c.portalBlobId ? 'var(--green-br)' : 'var(--dim)') + '">' + (c.portalBlobId ? '✓ Linked' : 'Not linked') + '</td>'
+      + '<td style="padding:8px 6px;text-align:right;white-space:nowrap"><button class="btn sm" onclick="challengeLink(\'' + esc(c.id) + '\')">' + (c.portalBlobId ? 'Copy link' : 'Create link') + '</button> ' + moveSelect(c) + '</td>'
+      + '</tr>';
+  };
+  var table = function(list, emptyMsg) {
+    if (!list.length) return '<div style="font-size:12px;color:var(--dim);padding:6px 0">' + emptyMsg + '</div>';
+    return '<table style="width:100%;border-collapse:collapse">' + list.map(row).join('') + '</table>';
+  };
+  var html = '<div class="card">'
+    + '<div class="card-title">🔥 28 Day Challenge Blocks</div>'
+    + '<div style="font-size:12px;color:var(--dim-2);line-height:1.7;margin-bottom:1rem">A block is a group that shares one Day 1. Add participants from <strong>New Client → Cohort → 28 Day Challenge</strong>, build each one\'s program, create their portal link here, then press <strong>Start</strong> — every participant\'s portal counts from that Day 1.</div>'
+    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    + '<input type="text" id="chNewBlockName" placeholder="Block name, e.g. Oct 12 Block" style="max-width:260px">'
+    + '<button class="btn gold" onclick="createChallengeBlock()">+ New Block</button>'
+    + '</div></div>';
+  blocks.forEach(function(b) {
+    var st = challengeBlockStatus(b);
+    var members = people.filter(function(c){ return c.challengeBlockId === b.id; });
+    html += '<div class="card">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:.75rem">'
+      + '<div><div style="font-family:Bebas Neue,sans-serif;font-size:22px;letter-spacing:.04em;color:var(--white)">' + esc(b.name) + '</div>'
+      + '<div style="font-size:11px;font-weight:700;color:' + st.color + '">' + esc(st.label) + ' · ' + members.length + ' participant' + (members.length === 1 ? '' : 's') + '</div></div>'
+      + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+      + '<input type="date" id="chStart-' + esc(b.id) + '" value="' + esc(b.startDate || challengeTodayYmd()) + '" style="max-width:160px">'
+      + '<button class="btn ' + (b.startDate ? 'sm' : 'gold') + '" onclick="startChallengeBlock(\'' + esc(b.id) + '\')">' + (b.startDate ? 'Change Day 1' : '▶ Start Block') + '</button>'
+      + (b.startDate ? '<button class="btn sm" onclick="sendChallengeBlock(\'' + esc(b.id) + '\')">Send to portals</button>' : '')
+      + '</div></div>'
+      + table(members, 'No participants yet. Add them from New Client → Cohort → 28 Day Challenge.')
+      + '</div>';
+  });
+  var loose = people.filter(function(c){ return blockIds.indexOf(c.challengeBlockId) === -1; });
+  if (loose.length) {
+    html += '<div class="card"><div class="card-title">Participants without a block</div>' + table(loose, '') + '</div>';
+  }
+  el.innerHTML = html;
+}
+window.addEventListener('load', fillChallengeBlockPicker);
 
 window.addEventListener('load', init);
 </script>

@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=47 -->
+<!-- portal cache-buster v=48 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -4221,6 +4221,83 @@ function loadSharedProfile() {
     });
 }
 window.addEventListener('DOMContentLoaded', loadSharedProfile);
+
+// ── 28 Day Challenge: Day X of 28 (NEW, non-protected, additive only) ──
+// Challenge participants' profiles carry `challenge` {blockId, blockName,
+// startDate, days}. loadProfileFromCode (shared, unedited) keeps only a fixed
+// field list on re-fetch, so the challenge info is kept under its OWN storage
+// key and refreshed by a separate fetch that runs only for challenge
+// participants (or a brand-new device with no profile yet). Existing clients:
+// cohort is never '28 Day Challenge', so nothing is fetched, stored or drawn.
+const CHALLENGE_KEY = 'mrs_challenge_v1';
+const CHALLENGE_COHORT_NAME = '28 Day Challenge';
+
+function readChallengeInfo() {
+  try { var s = JSON.parse(localStorage.getItem(CHALLENGE_KEY) || 'null'); if (s && s.cohort === CHALLENGE_COHORT_NAME) return s; } catch(e) {}
+  var cp = portalDb().clientProfile;
+  if (cp && cp.cohort === CHALLENGE_COHORT_NAME && cp.challenge) return { cohort: cp.cohort, challenge: cp.challenge };
+  return null;
+}
+
+function challengeDayOf(ymd) {
+  var p = String(ymd || '').split('-').map(Number);
+  if (p.length !== 3 || p.some(isNaN)) return null;
+  var n = new Date();
+  return Math.floor((Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()) - Date.UTC(p[0], p[1]-1, p[2])) / 864e5) + 1;
+}
+
+function renderChallengeDay() {
+  var old = document.getElementById('challengeDayCard'); if (old) old.remove();
+  var host = document.getElementById('screen-today');
+  var info = readChallengeInfo();
+  if (!host || !info || !info.challenge) return;
+  var ch = info.challenge, total = ch.days || 28;
+  var d = ch.startDate ? challengeDayOf(ch.startDate) : null;
+  var name = String(ch.blockName || '').replace(/[&<>"']/g, function(x){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]; });
+  var head, sub, pct = 0;
+  if (d === null) {
+    head = '28 Day Challenge'; sub = 'Your coach will kick off Day 1 for the whole group. Get your Daily Five ready.';
+  } else if (d < 1) {
+    var p = ch.startDate.split('-').map(Number);
+    head = 'Starts ' + new Date(p[0], p[1]-1, p[2]).toLocaleDateString(undefined, { weekday:'long', month:'short', day:'numeric' });
+    sub = 'Day 1 of the 28 Day Challenge. Get your Daily Five ready.';
+  } else if (d > total) {
+    head = 'Challenge complete'; sub = 'You finished all ' + total + ' days. Your coach will be in touch about what\'s next.'; pct = 100;
+  } else {
+    head = 'Day ' + d + ' <span style="color:var(--dim2);font-size:.6em">of ' + total + '</span>';
+    sub = 'Week ' + Math.ceil(d / 7) + ' of 4 · Hit your Daily Five today.'; pct = Math.round(d / total * 100);
+  }
+  var div = document.createElement('div');
+  div.id = 'challengeDayCard';
+  div.style.cssText = 'background:rgba(201,162,39,.08);border:1px solid rgba(201,162,39,.3);border-radius:12px;padding:12px 14px;margin:0 0 14px';
+  div.innerHTML =
+    '<div style="font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);font-family:\'Barlow Condensed\',sans-serif;font-weight:700">🔥 28 Day Challenge' + (name ? ' · ' + name : '') + '</div>'
+    + '<div style="font-family:\'Bebas Neue\',sans-serif;font-size:30px;letter-spacing:.03em;color:var(--white);line-height:1.1;margin-top:2px">' + head + '</div>'
+    + (pct ? '<div style="height:6px;background:rgba(255,255,255,.08);border-radius:3px;margin:8px 0 6px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:var(--gold)"></div></div>' : '')
+    + '<div style="font-size:12px;color:var(--dim2);line-height:1.5;margin-top:4px">' + sub + '</div>';
+  host.insertBefore(div, host.firstChild);
+}
+
+function syncChallengeInfo() {
+  var cp = portalDb().clientProfile;
+  var id = new URLSearchParams(window.location.search).get('p');
+  var mayBeChallenge = !cp || cp.cohort === CHALLENGE_COHORT_NAME;
+  if (!mayBeChallenge) return; // existing (non-challenge) client: no fetch, no render
+  renderChallengeDay();
+  if (!id) return;
+  fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile?id=' + encodeURIComponent(id))
+    .then(function(res){ if (!res.ok) throw new Error('not found'); return res.json(); })
+    .then(function(j){
+      if (!j || j.cohort !== CHALLENGE_COHORT_NAME || !j.challenge) return;
+      try { localStorage.setItem(CHALLENGE_KEY, JSON.stringify({ cohort: j.cohort, challenge: j.challenge, fetchedAt: Date.now() })); } catch(e) {}
+      renderChallengeDay();
+    })
+    .catch(function(){});
+}
+window.addEventListener('load', syncChallengeInfo);
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'visible' && readChallengeInfo()) renderChallengeDay();
+});
 </script>
 </body>
 </html>
