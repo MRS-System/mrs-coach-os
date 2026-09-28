@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=48 -->
+<!-- portal cache-buster v=49 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -4276,6 +4276,7 @@ function renderChallengeDay() {
     + (pct ? '<div style="height:6px;background:rgba(255,255,255,.08);border-radius:3px;margin:8px 0 6px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:var(--gold)"></div></div>' : '')
     + '<div style="font-size:12px;color:var(--dim2);line-height:1.5;margin-top:4px">' + sub + '</div>';
   host.insertBefore(div, host.firstChild);
+  renderChallengeSelfTest();
 }
 
 function syncChallengeInfo() {
@@ -4298,6 +4299,184 @@ window.addEventListener('load', syncChallengeInfo);
 document.addEventListener('visibilitychange', function () {
   if (document.visibilityState === 'visible' && readChallengeInfo()) renderChallengeDay();
 });
+
+// ── 28 Day Challenge: Day 1 / Day 28 self-test (NEW, non-protected, additive) ──
+// Five self-measured markers. Day 1 "Your Baseline" (skippable; prompts once
+// more on Day 2, then drops). Day 28 "Your Retest" (every open until done, from
+// Day 28 on). Never blocks check-ins. Stored locally under its own key and sent
+// to the coach through a SEPARATE mailbox ('<clientId>::selftest'), which the
+// weekly-send path never touches. Everything here is reached only when
+// readChallengeInfo() finds a challenge participant — existing clients never.
+const SELFTEST_STORE = 'mrs_challenge_selftest_v1';
+const SELFTEST_FIELDS = [
+  { key:'weight',  label:'Body weight',        unit:'lbs', better:'neutral', hint:'' },
+  { key:'waist',   label:'Waist',              unit:'inches', short:'in', better:'down', hint:'At the navel, relaxed — don’t suck in.' },
+  { key:'rhr',     label:'Resting heart rate', unit:'BPM, in the morning', short:'bpm', better:'down', hint:'' },
+  { key:'pushups', label:'Max push-ups',       unit:'unbroken', short:'', better:'up', hint:'Full range, chest to fist height. Stop when form breaks.' },
+  { key:'plank',   label:'Plank hold',         unit:'seconds', short:'sec', better:'up', hint:'Hold straight. Stop when your hips drop.' },
+];
+var _selfTestLater = false, _selfTestPick = {};
+
+function readSelfTests() {
+  try { return JSON.parse(localStorage.getItem(SELFTEST_STORE) || '{}') || {}; } catch(e) { return {}; }
+}
+function writeSelfTests(st) {
+  try { localStorage.setItem(SELFTEST_STORE, JSON.stringify(st)); } catch(e) {}
+}
+function selfTestEsc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, function(x){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]; });
+}
+
+// 'day1' | 'day28' | 'result' | null
+function selfTestDue() {
+  var info = readChallengeInfo();
+  if (!info || !info.challenge || !info.challenge.startDate) return null;
+  var d = challengeDayOf(info.challenge.startDate), total = info.challenge.days || 28, st = readSelfTests();
+  if (d >= total) return st.challenge_selftest_day28 ? 'result' : (_selfTestLater ? null : 'day28');
+  if ((d === 1 || d === 2) && !st.challenge_selftest_day1 && !((st.skips || {})[d])) return 'day1';
+  return null;
+}
+
+function selfTestProtocolLine(d1) {
+  if (!d1 || !d1.timeOfDay) return '';
+  return 'You measured Day 1 in the ' + selfTestEsc(d1.timeOfDay) + (d1.fasted === 'yes' ? ', fasted' : d1.fasted === 'no' ? ', not fasted' : '') + ' — match that now for a true comparison.';
+}
+
+function selfTestDeltaP(f, a, b) {
+  var x = parseFloat(a), y = parseFloat(b);
+  if (isNaN(x) || isNaN(y)) return { text:'—', win:false };
+  var d = Math.round((y - x) * 10) / 10;
+  var u = f.short !== undefined ? f.short : f.unit;
+  return { text: d === 0 ? 'No change' : (d > 0 ? '+' : '−') + Math.abs(d) + (u ? ' ' + u : ''),
+           win: f.better === 'down' ? d < 0 : f.better === 'up' ? d > 0 : false };
+}
+
+function renderChallengeSelfTest() {
+  var rr = document.getElementById('retestReminder'); if (rr && readChallengeInfo()) rr.remove(); // Day 28 retest replaces the 1-on-1 banner
+  var old = document.getElementById('challengeSelfTestCard'); if (old) old.remove();
+  var host = document.getElementById('screen-today');
+  var due = selfTestDue();
+  if (!host || !due) return;
+  var st = readSelfTests(), d1 = st.challenge_selftest_day1, d28 = st.challenge_selftest_day28;
+  var div = document.createElement('div');
+  div.id = 'challengeSelfTestCard';
+  div.style.cssText = 'background:var(--black3,#141410);border:1.5px solid rgba(201,162,39,.45);border-radius:14px;padding:14px;margin:0 0 14px';
+  var title = function(t){ return '<div style="font-family:\'Bebas Neue\',sans-serif;font-size:22px;letter-spacing:.04em;color:var(--gold);line-height:1.1">' + t + '</div>'; };
+  var btn = function(label, fn, gold){ return '<button onclick="' + fn + '" style="padding:10px 16px;border-radius:9px;cursor:pointer;font-family:\'Bebas Neue\',sans-serif;font-size:15px;letter-spacing:.06em;' + (gold ? 'background:var(--gold);border:none;color:var(--black)' : 'background:none;border:1px solid rgba(255,255,255,.18);color:var(--dim2)') + '">' + label + '</button>'; };
+  if (due === 'day1') {
+    div.innerHTML = title('📏 Your Baseline')
+      + '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6;margin:5px 0 12px">Five quick numbers, under 2 minutes. They’re what you’ll beat on Day 28. All you need is a tape measure.</div>'
+      + '<div style="display:flex;gap:8px">' + btn('Start', "openSelfTestSheet('day1')", true) + btn('Skip for now', 'skipSelfTest()') + '</div>';
+  } else if (due === 'day28') {
+    var pl = selfTestProtocolLine(d1);
+    div.innerHTML = title('🏁 Your Retest')
+      + '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6;margin:5px 0 12px">' + (pl || 'Same five numbers as Day 1. Under 2 minutes.') + '</div>'
+      + '<div style="display:flex;gap:8px">' + btn('Start', "openSelfTestSheet('day28')", true) + btn('Later', 'laterSelfTest()') + '</div>';
+  } else {
+    var rows = SELFTEST_FIELDS.map(function(f) {
+      var u = f.short !== undefined ? f.short : f.unit;
+      var a = d1 ? d1[f.key] : '', z = d28 ? d28[f.key] : '';
+      var dl = d1 ? selfTestDeltaP(f, a, z) : null;
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid rgba(255,255,255,.07)">'
+        + '<div style="font-size:13px;color:var(--white);font-weight:600">' + f.label + '</div>'
+        + '<div style="display:flex;align-items:center;gap:10px">'
+        + '<div style="font-size:12.5px;color:var(--dim2)">' + (d1 ? selfTestEsc(a) + ' → ' : '') + '<span style="color:var(--white);font-weight:600">' + selfTestEsc(z) + '</span>' + (u ? ' ' + u : '') + '</div>'
+        + (dl ? '<div style="min-width:74px;text-align:center;font-size:11.5px;font-weight:700;padding:3px 7px;border-radius:6px;' + (dl.win ? 'background:rgba(34,197,94,.15);color:var(--green)' : 'background:rgba(255,255,255,.06);color:var(--dim2)') + '">' + (dl.win ? '✓ ' : '') + dl.text + '</div>' : '')
+        + '</div></div>';
+    }).join('');
+    div.innerHTML = title('🏆 Your Results · Day 1 → Day 28')
+      + '<div style="font-size:12px;color:var(--dim2);line-height:1.6;margin:5px 0 8px">' + (d1 ? 'Green is a win. Weight is shown for reference only — the scale is one number, not the story.' : 'No Day 1 baseline was recorded, so there’s nothing to compare — these are your new starting numbers.') + '</div>'
+      + rows;
+  }
+  var dayCard = document.getElementById('challengeDayCard');
+  if (dayCard && dayCard.parentNode === host) host.insertBefore(div, dayCard.nextSibling);
+  else host.insertBefore(div, host.firstChild);
+}
+
+function skipSelfTest() {
+  var info = readChallengeInfo(); if (!info || !info.challenge) return;
+  var st = readSelfTests(); st.skips = st.skips || {};
+  st.skips[challengeDayOf(info.challenge.startDate)] = Date.now();
+  writeSelfTests(st);
+  renderChallengeSelfTest();
+  showToast('No problem — you can do it tomorrow.');
+}
+function laterSelfTest() { _selfTestLater = true; renderChallengeSelfTest(); }
+
+function openSelfTestSheet(kind) {
+  closeSelfTestSheet();
+  _selfTestPick = {};
+  var st = readSelfTests(), pl = kind === 'day28' ? selfTestProtocolLine(st.challenge_selftest_day1) : '';
+  var opt = function(group, val, label){ return '<button type="button" class="yn-btn" data-g="' + group + '" data-v="' + val + '" onclick="pickSelfTestOpt(this)">' + label + '</button>'; };
+  var inputs = SELFTEST_FIELDS.map(function(f) {
+    return '<div style="margin-bottom:14px">'
+      + '<label for="st-' + f.key + '" style="display:block;font-size:13px;font-weight:600;color:var(--white);margin-bottom:5px">' + f.label + ' <span style="color:var(--dim2);font-weight:400">(' + f.unit + ')</span></label>'
+      + '<input id="st-' + f.key + '" type="number" inputmode="decimal" min="0" step="any" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:var(--white);font-size:17px">'
+      + (f.hint ? '<div style="font-size:11.5px;color:var(--dim2);margin-top:5px;line-height:1.5">' + f.hint + '</div>' : '')
+      + '</div>';
+  }).join('');
+  var proto = kind === 'day1'
+    ? '<div style="margin:4px 0 14px"><div style="font-size:13px;font-weight:600;color:var(--white);margin-bottom:6px">When are you measuring?</div><div style="display:flex;gap:6px">' + opt('timeOfDay','morning','Morning') + opt('timeOfDay','afternoon','Afternoon') + opt('timeOfDay','evening','Evening') + '</div></div>'
+      + '<div style="margin:0 0 14px"><div style="font-size:13px;font-weight:600;color:var(--white);margin-bottom:6px">Have you eaten yet today?</div><div style="display:flex;gap:6px">' + opt('fasted','yes','No — fasted') + opt('fasted','no','Yes, I’ve eaten') + '</div></div>'
+    : '';
+  var sheet = document.createElement('div');
+  sheet.id = 'selfTestSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:flex-end;justify-content:center';
+  sheet.innerHTML = '<div style="background:var(--black2,#0f0f0c);width:100%;max-width:520px;max-height:92vh;overflow-y:auto;border-radius:18px 18px 0 0;padding:20px 18px 28px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-family:\'Bebas Neue\',sans-serif;font-size:24px;letter-spacing:.04em;color:var(--gold)">' + (kind === 'day1' ? 'Your Baseline' : 'Your Retest') + '</div>'
+    + '<button onclick="closeSelfTestSheet()" aria-label="Close" style="background:none;border:none;color:var(--dim2);font-size:26px;cursor:pointer">×</button></div>'
+    + (pl ? '<div style="font-size:12.5px;color:var(--white);background:rgba(201,162,39,.12);border-radius:9px;padding:10px 12px;line-height:1.5;margin-bottom:14px">' + pl + '</div>' : '<div style="font-size:12.5px;color:var(--dim2);margin-bottom:14px">Five numbers. Be honest — it’s your proof.</div>')
+    + proto + inputs
+    + '<div id="selfTestErr" style="font-size:12px;color:var(--red);min-height:16px;margin-bottom:8px"></div>'
+    + '<button onclick="saveSelfTest(\'' + kind + '\')" style="width:100%;padding:14px;background:var(--gold);border:none;border-radius:12px;color:var(--black);font-family:\'Bebas Neue\',sans-serif;font-size:18px;letter-spacing:.1em;cursor:pointer">Save</button>'
+    + '</div>';
+  document.body.appendChild(sheet);
+}
+function closeSelfTestSheet() { var s = document.getElementById('selfTestSheet'); if (s) s.remove(); }
+function pickSelfTestOpt(el) {
+  var g = el.getAttribute('data-g');
+  _selfTestPick[g] = el.getAttribute('data-v');
+  document.querySelectorAll('#selfTestSheet .yn-btn[data-g="' + g + '"]').forEach(function(b){ b.className = 'yn-btn' + (b === el ? ' yes' : ''); });
+}
+
+function saveSelfTest(kind) {
+  var key = kind === 'day1' ? 'challenge_selftest_day1' : 'challenge_selftest_day28';
+  var rec = { checkpoint: key, date: Date.now() }, missing = [];
+  SELFTEST_FIELDS.forEach(function(f) {
+    var el = document.getElementById('st-' + f.key), v = el ? el.value.trim() : '';
+    if (v === '' || isNaN(parseFloat(v)) || parseFloat(v) < 0) missing.push(f.label); else rec[f.key] = String(parseFloat(v));
+  });
+  if (kind === 'day1') {
+    if (!_selfTestPick.timeOfDay) missing.push('time of day'); else rec.timeOfDay = _selfTestPick.timeOfDay;
+    if (!_selfTestPick.fasted) missing.push('eaten yet'); else rec.fasted = _selfTestPick.fasted;
+  }
+  if (missing.length) { document.getElementById('selfTestErr').textContent = 'Still needed: ' + missing.join(', ') + '.'; return; }
+  var st = readSelfTests(); st[key] = rec; writeSelfTests(st);
+  closeSelfTestSheet();
+  renderChallengeSelfTest();
+  showToast(kind === 'day1' ? 'Baseline saved ✓ See you on Day 28.' : 'Retest saved ✓ Look at what you did.');
+  sendSelfTests();
+}
+
+// Deliver saved results to the coach; retried on every open until accepted.
+function sendSelfTests() {
+  if (!readChallengeInfo()) return;
+  var cp = portalDb().clientProfile, cid = (client && client.id) || (cp && cp.id);
+  if (!cid) return;
+  var st = readSelfTests();
+  ['challenge_selftest_day1', 'challenge_selftest_day28'].forEach(function(k) {
+    var rec = st[k];
+    if (!rec || (st.sent || {})[k] === rec.date) return;
+    fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/inbox', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId: cid + '::selftest', payload: { type: 'challenge_selftest', clientId: cid, key: k, record: rec } })
+    }).then(function(r) {
+      if (!r.ok) throw new Error('status ' + r.status);
+      var s2 = readSelfTests(); s2.sent = s2.sent || {}; s2.sent[k] = rec.date; writeSelfTests(s2);
+    }).catch(function(){});
+  });
+}
+window.addEventListener('load', function () { if (readChallengeInfo()) { renderChallengeSelfTest(); sendSelfTests(); } });
 </script>
 </body>
 </html>
