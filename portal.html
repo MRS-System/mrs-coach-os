@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=49 -->
+<!-- portal cache-buster v=50 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2038,7 +2038,8 @@ function renderTodayChecklist(){
 
   // Restore wellness sliders
   if(ci.energy)document.getElementById('energySlider').value=ci.energy,document.getElementById('energyVal').textContent=ci.energy;
-  if(ci.sleep)document.getElementById('sleepSlider').value=ci.sleep,document.getElementById('sleepVal').textContent=ci.sleep;
+  const sq=typeof ci.sleepQuality==='number'?ci.sleepQuality:(typeof ci.sleep==='number'?ci.sleep:null);
+  if(sq)document.getElementById('sleepSlider').value=sq,document.getElementById('sleepVal').textContent=sq;
   if(ci.stress)document.getElementById('stressSlider').value=ci.stress,document.getElementById('stressVal').textContent=ci.stress;
 
   updateTodayProgress(ci);
@@ -2126,7 +2127,7 @@ function autoSaveWellness(){
   // slider used to co-save the other two at 5, inflating the weekly score.
   const e=document.getElementById('energySlider'),s=document.getElementById('sleepSlider'),st=document.getElementById('stressSlider');
   if(e&&e.dataset.touched==='1')pdb.checkins[k].energy=parseInt(e.value);
-  if(s&&s.dataset.touched==='1')pdb.checkins[k].sleep=parseInt(s.value);
+  if(s&&s.dataset.touched==='1')pdb.checkins[k].sleepQuality=parseInt(s.value); // quality 1-10 has its OWN field; ci.sleep is the 7+ hours yes/no
   if(st&&st.dataset.touched==='1')pdb.checkins[k].stress=parseInt(st.value);
   pdb.checkins[k].ts=Date.now();
   savePortalDb(pdb);
@@ -2181,7 +2182,7 @@ function calcWeekScore(offset=0){
   days.forEach(d=>{
     const ci=pdb.checkins[d.key];if(!ci)return;
     const any=yes(ci.protein)||yes(ci.water)||yes(ci.steps)||ci.workout!=null||ci.sleep!=null
-      ||ci.energy!=null||ci.stress!=null||(ci.meals&&ci.meals.length)||(ci.barcodeItems&&ci.barcodeItems.length);
+      ||ci.energy!=null||ci.stress!=null||ci.sleepQuality!=null||(ci.meals&&ci.meals.length)||(ci.barcodeItems&&ci.barcodeItems.length);
     if(any)daysLogged++;
     if(sleptWell(ci.sleep))sleep++;
     if(yes(ci.protein))eat++;
@@ -2192,7 +2193,8 @@ function calcWeekScore(offset=0){
     // Diagnostics only. Energy and stress are not controllables, so they inform
     // the coach but no longer move the score.
     if(ci.energy!=null){energySum+=ci.energy;energyDays++;}
-    if(typeof ci.sleep==='number'){sleepSum+=ci.sleep;sleepNum++;}
+    const sq=typeof ci.sleepQuality==='number'?ci.sleepQuality:(typeof ci.sleep==='number'?ci.sleep:null); // legacy days stored quality in .sleep
+    if(sq!=null){sleepSum+=sq;sleepNum++;}
     if(ci.stress!=null){stressSum+=ci.stress;stressDays++;}
   });
   const clamp=v=>Math.max(0,Math.min(7,Math.round(v)));
@@ -2685,13 +2687,30 @@ function openEditForDay(dayKey,dayLabel){
     <div style="margin-bottom:18px">
       <button class="yn-btn ${ci.workout==='rest'?'rest':''}" style="width:100%" id="eWorkoutRest" onclick="setEditToggle('eWorkout','rest')">\u2014 Rest Day</button>
     </div>
-    <div class="slider-field"><div class="slider-header"><span class="slider-label">\u26a1 Energy</span><span class="slider-val" id="eEnergyVal">${ci.energy||5}</span></div><input type="range" min="1" max="10" value="${ci.energy||5}" id="eEnergySlider" oninput="document.getElementById('eEnergyVal').textContent=this.value"></div>
-    <div class="slider-field"><div class="slider-header"><span class="slider-label">\ud83d\ude34 Sleep</span><span class="slider-val" id="eSleepVal">${ci.sleep||5}</span></div><input type="range" min="1" max="10" value="${ci.sleep||5}" id="eSleepSlider" oninput="document.getElementById('eSleepVal').textContent=this.value"></div>
-    <div class="slider-field" style="margin-bottom:0"><div class="slider-header"><span class="slider-label">\ud83e\udde0 Stress</span><span class="slider-val" id="eStressVal">${ci.stress||5}</span></div><input type="range" min="1" max="10" value="${ci.stress||5}" id="eStressSlider" oninput="document.getElementById('eStressVal').textContent=this.value"></div>`;
+    <div style="font-size:12px;color:var(--dim2);font-weight:600;margin-bottom:8px">Sleep \u2014 7+ hours?</div>
+    <div class="yn-row" style="margin-bottom:16px">
+      <button class="yn-btn ${ci.sleep===true||ci.sleep==='yes'||(typeof ci.sleep==='number'&&ci.sleep>=7)?'yes':''}" id="eSleepYes" onclick="setEditToggle('eSleep','yes')">\u2713 7+ hrs</button>
+      <button class="yn-btn ${ci.sleep===false||ci.sleep==='no'?'no':''}" id="eSleepNo" onclick="setEditToggle('eSleep','no')">\u2717 Under 7</button>
+    </div>
+    <div style="font-size:12px;color:var(--dim2);font-weight:600;margin-bottom:8px">Walk?</div>
+    <div class="yn-row" style="margin-bottom:16px">
+      <button class="yn-btn ${ci.steps===true||ci.steps==='yes'?'yes':''}" id="eStepsYes" onclick="setEditToggle('eSteps','yes')">\u2713 Yes</button>
+      <button class="yn-btn ${ci.steps===false||ci.steps==='no'?'no':''}" id="eStepsNo" onclick="setEditToggle('eSteps','no')">\u2717 Not today</button>
+    </div>
+    <div class="slider-field"><div class="slider-header"><span class="slider-label">\u26a1 Energy</span><span class="slider-val" id="eEnergyVal">${ci.energy||5}</span></div><input type="range" min="1" max="10" value="${ci.energy||5}" id="eEnergySlider" oninput="this.dataset.touched='1';document.getElementById('eEnergyVal').textContent=this.value"></div>
+    <div class="slider-field"><div class="slider-header"><span class="slider-label">\ud83d\ude34 Sleep Quality</span><span class="slider-val" id="eSleepVal">${editSleepQuality(ci)}</span></div><input type="range" min="1" max="10" value="${editSleepQuality(ci)}" id="eSleepSlider" oninput="this.dataset.touched='1';document.getElementById('eSleepVal').textContent=this.value"></div>
+    <div class="slider-field" style="margin-bottom:0"><div class="slider-header"><span class="slider-label">\ud83e\udde0 Stress</span><span class="slider-val" id="eStressVal">${ci.stress||5}</span></div><input type="range" min="1" max="10" value="${ci.stress||5}" id="eStressSlider" oninput="this.dataset.touched='1';document.getElementById('eStressVal').textContent=this.value"></div>`;
   document.getElementById('editModal').classList.add('open');
 }
 
+// Edit-form sleep-quality slider start value: quality field, else a legacy
+// numeric sleep, else 5. Never the 7+ hours yes/no.
+function editSleepQuality(ci){
+  return typeof ci.sleepQuality==='number'?ci.sleepQuality:(typeof ci.sleep==='number'?ci.sleep:5);
+}
 function setEditToggle(type,val){
+  if(type==='eSleep'){document.getElementById('eSleepYes').className='yn-btn'+(val==='yes'?' yes':'');document.getElementById('eSleepNo').className='yn-btn'+(val==='no'?' no':'');}
+  if(type==='eSteps'){document.getElementById('eStepsYes').className='yn-btn'+(val==='yes'?' yes':'');document.getElementById('eStepsNo').className='yn-btn'+(val==='no'?' no':'');}
   if(type==='eProtein'){document.getElementById('eProteinYes').className='yn-btn'+(val==='yes'?' yes':'');document.getElementById('eProteinNo').className='yn-btn'+(val==='no'?' no':'');}
   if(type==='eWater'){document.getElementById('eWaterYes').className='yn-btn'+(val==='yes'?' yes':'');document.getElementById('eWaterNo').className='yn-btn'+(val==='no'?' no':'');}
   if(type==='eWorkout'){document.getElementById('eWorkoutYes').className='yn-btn'+(val==='yes'?' yes':'');document.getElementById('eWorkoutNo').className='yn-btn'+(val==='no'?' no':'');document.getElementById('eWorkoutRest').className='yn-btn'+(val==='rest'?' rest':'');}
@@ -2708,14 +2727,23 @@ function saveEditModal(){
   const workoutYes=document.getElementById('eWorkoutYes')?.classList.contains('yes');
   const workoutNo=document.getElementById('eWorkoutNo')?.classList.contains('no');
   const workoutRest=document.getElementById('eWorkoutRest')?.classList.contains('rest');
+  const sleepYes=document.getElementById('eSleepYes')?.classList.contains('yes');
+  const sleepNo=document.getElementById('eSleepNo')?.classList.contains('no');
+  const stepsYes=document.getElementById('eStepsYes')?.classList.contains('yes');
+  const stepsNo=document.getElementById('eStepsNo')?.classList.contains('no');
+  // Sliders save ONLY when moved — an untouched slider must never overwrite a day.
+  const moved=id=>{const el=document.getElementById(id);return el&&el.dataset.touched==='1'?parseInt(el.value):null;};
+  const eMoved=moved('eEnergySlider'),sqMoved=moved('eSleepSlider'),stMoved=moved('eStressSlider');
   pdb.checkins[editingDayKey]={
     ...existing,
     protein:proteinNo?false:proteinYes?true:existing.protein,
     water:waterNo?false:waterYes?true:existing.water,
     workout:workoutYes?'yes':workoutNo?'no':workoutRest?'rest':existing.workout,
-    energy:parseInt(document.getElementById('eEnergySlider')?.value||existing.energy||5),
-    sleep:parseInt(document.getElementById('eSleepSlider')?.value||existing.sleep||5),
-    stress:parseInt(document.getElementById('eStressSlider')?.value||existing.stress||5),
+    sleep:sleepNo?false:sleepYes?true:existing.sleep,
+    steps:stepsNo?false:stepsYes?true:existing.steps,
+    energy:eMoved!=null?eMoved:existing.energy,
+    sleepQuality:sqMoved!=null?sqMoved:existing.sleepQuality,
+    stress:stMoved!=null?stMoved:existing.stress,
     edited:true,ts:existing.ts||Date.now(),
   };
   savePortalDb(pdb);
@@ -3889,7 +3917,7 @@ function detectUnsentWeeks() {
       const ci = pdb.checkins && pdb.checkins[d.key];
       if (!ci) return false;
       return ci.protein!=null || ci.water!=null || ci.workout!=null || ci.energy!=null
-          || ci.sleep!=null || ci.stress!=null || (ci.meals && ci.meals.length);
+          || ci.sleep!=null || ci.sleepQuality!=null || ci.stress!=null || (ci.meals && ci.meals.length);
     });
     if (hasData) out.push({offset: off, weekKey: wk});
   }
