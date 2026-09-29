@@ -4756,7 +4756,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=51';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=52';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4941,7 +4941,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=51',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=52',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5416,7 +5416,7 @@ function buildTrendsSection(c) {
     const days = checkins.length || 1;
     return {val: checkins.length ? Math.round(hits/days*100) : null, label: wkLabel(w)};
   });
-  html += miniChart('Protein Hit Rate (%)', proteinPts, '#f97316', '%', false, [{val:70, color:'var(--green-br)', label:'70%'}]);
+  html += miniChart('Protein Every Meal (% of days)', proteinPts, '#f97316', '%', false, [{val:70, color:'var(--green-br)', label:'70%'}]);
 
   // NUTRIREADER AVERAGE
   const nutriPts = weeks.map(w => ({
@@ -7167,7 +7167,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=51';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=52';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the

@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=51 -->
+<!-- portal cache-buster v=52 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1544,14 +1544,14 @@ input[type=range]::-moz-range-thumb {
             <span class="check-item-icon">🥩</span>
             <div class="check-item-info">
               <div class="check-item-label">Protein</div>
-              <div class="check-item-sub">Bodyweight × 0.7–0.8g protein today</div>
+              <div class="check-item-sub">Did you eat protein with each meal?</div>
             </div>
             <span class="check-item-status" id="cs-protein">⬜</span>
           </div>
           <div class="check-item-actions">
             <div class="yn-row">
-              <button class="yn-btn" id="pb-yes" onclick="saveCheckItem('protein','yes')">✓ Hit it</button>
-              <button class="yn-btn" id="pb-no"  onclick="saveCheckItem('protein','no')">✗ Missed</button>
+              <button class="yn-btn" id="pb-yes" onclick="saveCheckItem('protein','yes')">✓ Every meal</button>
+              <button class="yn-btn" id="pb-no"  onclick="saveCheckItem('protein','no')">✗ Missed a meal</button>
             </div>
           </div>
         </div>
@@ -2703,7 +2703,7 @@ function openEditForDay(dayKey,dayLabel){
   document.getElementById('editModalTitle').textContent=`Edit \u2014 ${dayLabel}`;
   document.getElementById('editModalBody').innerHTML=`
     <div style="font-size:12px;color:var(--dim);margin-bottom:16px">Tap to change your answers then hit Save Changes.</div>
-    <div style="font-size:12px;color:var(--dim2);font-weight:600;margin-bottom:8px">Protein hit?</div>
+    <div style="font-size:12px;color:var(--dim2);font-weight:600;margin-bottom:8px">Protein with each meal?</div>
     <div class="yn-row" style="margin-bottom:16px">
       <button class="yn-btn ${ci.protein===true||ci.protein==='yes'?'yes':''}" id="eProteinYes" onclick="setEditToggle('eProtein','yes')">\u2713 Yes</button>
       <button class="yn-btn ${ci.protein===false||ci.protein==='no'?'no':''}" id="eProteinNo" onclick="setEditToggle('eProtein','no')">\u2717 No</button>
@@ -3107,11 +3107,9 @@ function logNRMeal() {
   const mealEntry = {ts:Date.now(),score,macros,context,timing,proteinVerdict,thumb: nrPendingThumb || null};
   pdb.checkins[today].meals.push(mealEntry);
   nrPendingThumb = null;
-  if (proteinVerdict === 'high') {
-    const totalProtein = pdb.checkins[today].meals.reduce((s,m) => s+(m.macros?.protein||0), 0);
-    const bw = parseFloat(client?.intake?.weight||0);
-    if (bw > 0 && totalProtein >= bw * 0.75) pdb.checkins[today].protein = 'yes';
-  }
+  // Protein is a behaviour — a protein source with each meal — answered by the
+  // client on Today. Scans never tick it (the old grams-vs-bodyweight auto-tick
+  // measured amount, not practice).
   pdb.checkins[today].ts = Date.now();
   // Drop thumbnails older than 30 days before writing (macros/score persist forever).
   pruneNRThumbs(pdb);
@@ -3414,7 +3412,7 @@ function barcodeHandoffToPhoto() {
 }
 
 // Save a macro-only barcode item into the SEPARATE barcodeItems[] array (never
-// .meals). thumb:null, no score. Macros count toward the day's protein gate.
+// .meals). thumb:null, no score. Macros are info only — protein (each meal) is answered by the client.
 function logBarcodeMeal(entry) {
   const pdb = portalDb();
   const today = todayKey();
@@ -3440,13 +3438,7 @@ function logBarcodeMeal(entry) {
   };
   pdb.checkins[today].barcodeItems.push(item);
   pdb.checkins[today].ts = Date.now();
-  // Protein checkbox gate: total protein = photo meals + barcode items.
-  const meals = pdb.checkins[today].meals || [];
-  const items = pdb.checkins[today].barcodeItems;
-  const totalProtein = meals.reduce(function(s,x){return s+((x.macros && x.macros.protein) || 0);}, 0)
-    + items.reduce(function(s,x){return s+((x.macros && x.macros.protein) || 0);}, 0);
-  const bw = parseFloat(client?.intake?.weight || 0);
-  if (bw > 0 && totalProtein >= bw * 0.75) pdb.checkins[today].protein = 'yes';
+  // Protein is answered by the client (protein with each meal) — never auto-ticked from grams.
   savePortalDb(pdb);
   barcodePending = null;
   closeBarcodeScanner();
