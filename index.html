@@ -4756,7 +4756,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=50';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=51';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4941,7 +4941,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=50',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=51',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -7167,7 +7167,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=50';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=51';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
@@ -7561,7 +7561,7 @@ function printChallengeReport(clientId) {
           + '<div class="hero-label"><strong>Best week of the challenge</strong>'
           + 'Average ' + avg + '/35 across ' + weeks.length + ' week' + (weeks.length === 1 ? '' : 's')
           + (weeks.length > 1 ? ' · Week 1 ' + first + ' → final week ' + last : '')
-          + (streak ? ' · longest streak ' + streak + ' day' + (streak === 1 ? '' : 's') : '') + '</div></div>'
+          + (streak ? ' · streak ' + streak + ' week' + (streak === 1 ? '' : 's') + ' beating the week before' : '') + '</div></div>'
           + '<table><tr><th>Week</th><th>Daily Five</th><th>Score</th></tr>' + weekRows + '</table>'
         : '<div class="note" style="margin:0 0 28px">No weekly check-ins arrived during the block.</div>')
 
