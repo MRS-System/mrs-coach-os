@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=53 -->
+<!-- portal cache-buster v=54 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -4388,7 +4388,8 @@ function selfTestDue() {
   if (!info || !info.challenge || !info.challenge.startDate) return null;
   var d = challengeDayOf(info.challenge.startDate), total = info.challenge.days || 28, st = readSelfTests();
   if (d >= total) return st.challenge_selftest_day28 ? 'result' : (_selfTestLater ? null : 'day28');
-  if ((d === 1 || d === 2) && !st.challenge_selftest_day1 && !((st.skips || {})[d])) return 'day1';
+  // Baseline asks on EVERY open during Days 1–2 until done; "Later" hides it only until the next open.
+  if ((d === 1 || d === 2) && !st.challenge_selftest_day1 && !_selfTestLater) return 'day1';
   return null;
 }
 
@@ -4421,7 +4422,7 @@ function renderChallengeSelfTest() {
   if (due === 'day1') {
     div.innerHTML = title('📏 Your Baseline')
       + '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6;margin:5px 0 12px">Five quick numbers, under 2 minutes. They’re what you’ll beat on Day 28. All you need is a tape measure.</div>'
-      + '<div style="display:flex;gap:8px">' + btn('Start', "openSelfTestSheet('day1')", true) + btn('Skip for now', 'skipSelfTest()') + '</div>';
+      + '<div style="display:flex;gap:8px">' + btn('Start', "openSelfTestSheet('day1')", true) + btn('Later', 'laterSelfTest()') + '</div>';
   } else if (due === 'day28') {
     var pl = selfTestProtocolLine(d1);
     div.innerHTML = title('🏁 Your Retest')

@@ -4757,7 +4757,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=53';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=54';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4942,7 +4942,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=53',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=54',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -7141,6 +7141,12 @@ function challengeBlockFor(c, data) {
   if (!c || !c.challengeBlockId) return null;
   return challengeBlocks(data || db()).find(function(b){ return b.id === c.challengeBlockId; }) || null;
 }
+// Blocks start on a SUNDAY (Justin, 2026-10-01) so the 28 days are exactly four
+// Sunday–Saturday score weeks. Today if it's Sunday, otherwise the next one.
+function challengeNextSundayYmd() {
+  var n = new Date(); n.setDate(n.getDate() + ((7 - n.getDay()) % 7));
+  return n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0') + '-' + String(n.getDate()).padStart(2,'0');
+}
 function challengeTodayYmd() {
   var n = new Date();
   return n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0') + '-' + String(n.getDate()).padStart(2,'0');
@@ -7168,7 +7174,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=53';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=54';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
@@ -7259,6 +7265,8 @@ async function startChallengeBlock(blockId) {
   var input = document.getElementById('chStart-' + blockId);
   var ymd = input ? input.value : '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) { toast('Pick a Day 1 date first'); return; }
+  var yp = ymd.split('-').map(Number);
+  if (new Date(yp[0], yp[1]-1, yp[2]).getDay() !== 0) { toast('Day 1 must be a Sunday — ' + challengeYmdLabel(ymd) + ' isn\'t. Next Sunday is ' + challengeYmdLabel(challengeNextSundayYmd()) + '.'); return; }
   var count = (data.clients || []).filter(function(c){ return isChallengeClient(c) && c.challengeBlockId === blockId; }).length;
   var verb = b.startDate ? 'Move Day 1 of ' : 'Start ';
   if (!confirm(verb + b.name + ' to ' + challengeYmdLabel(ymd) + '?\n\nDay 1 for all ' + count + ' participant' + (count === 1 ? '' : 's') + ' will be ' + challengeYmdLabel(ymd) + ', and their portals will be updated.')) return;
@@ -7357,7 +7365,7 @@ function renderChallengeBlocks() {
       + '<div><div style="font-family:Bebas Neue,sans-serif;font-size:22px;letter-spacing:.04em;color:var(--white)">' + esc(b.name) + '</div>'
       + '<div style="font-size:11px;font-weight:700;color:' + st.color + '">' + esc(st.label) + ' · ' + members.length + ' participant' + (members.length === 1 ? '' : 's') + '</div></div>'
       + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
-      + '<input type="date" id="chStart-' + esc(b.id) + '" value="' + esc(b.startDate || challengeTodayYmd()) + '" style="max-width:160px">'
+      + '<input type="date" id="chStart-' + esc(b.id) + '" value="' + esc(b.startDate || challengeNextSundayYmd()) + '" title="Day 1 — must be a Sunday" style="max-width:160px">'
       + '<button class="btn ' + (b.startDate ? 'sm' : 'gold') + '" onclick="startChallengeBlock(\'' + esc(b.id) + '\')">' + (b.startDate ? 'Change Day 1' : '▶ Start Block') + '</button>'
       + (b.startDate ? '<button class="btn sm" onclick="sendChallengeBlock(\'' + esc(b.id) + '\')">Send to portals</button>' : '')
       + '</div></div>'
