@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=52 -->
+<!-- portal cache-buster v=53 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2346,6 +2346,7 @@ function checkStreak(){
 function renderProgress(){
   const el=document.getElementById('progressContent');
   if(!client){el.innerHTML=`<div class="no-client"><div class="no-client-icon">📊</div><div class="no-client-title">No Data Yet</div><div class="no-client-sub">Open the link your coach sent you to see your progress.</div></div>`;return;}
+  if(isChallengePortal()){setTimeout(function(){renderChallengeProgress(el);},0);return;} // challenge participants get the 28 Day Challenge view; everyone else unchanged
   // Coach OS stores measurements as an OBJECT keyed by checkpoint; tolerate the
   // legacy array-of-records shape so an old profile never throws here.
   const msRaw=client.measurements;
@@ -4509,6 +4510,7 @@ function saveSelfTest(kind) {
   closeSelfTestSheet();
   renderChallengeSelfTest();
   showToast(kind === 'day1' ? 'Baseline saved ✓ See you on Day 28.' : 'Retest saved ✓ Look at what you did.');
+  var sp = document.getElementById('screen-progress'); if (sp && sp.classList.contains('active')) renderProgress();
   sendSelfTests();
 }
 
@@ -4531,6 +4533,100 @@ function sendSelfTests() {
   });
 }
 window.addEventListener('load', function () { if (readChallengeInfo()) { renderChallengeSelfTest(); sendSelfTests(); } });
+
+// ── 28 Day Challenge: Progress tab (NEW, non-protected, additive) ──
+// renderProgress has ONE guard that hands challenge participants here; every
+// other client's Progress tab is unchanged. Shows the block day, this week vs
+// last week, the streak, the weeks of the block, and the Day 1 / Day 28 self-test.
+// Safe to call at ANY point of page start-up: renderProgress runs inside init()
+// before the challenge constants further down the script exist, so this uses
+// only literals + portalDb (defined early). Challenge rendering itself is
+// deferred one tick by the caller, after the whole script has loaded.
+function isChallengePortal() {
+  try { var s = JSON.parse(localStorage.getItem('mrs_challenge_v1') || 'null'); if (s && s.cohort === '28 Day Challenge') return true; } catch(e) {}
+  var cp = portalDb().clientProfile;
+  return !!(cp && cp.cohort === '28 Day Challenge' && cp.challenge);
+}
+
+function selfTestRowsHtml(d1, d28) {
+  return SELFTEST_FIELDS.map(function(f) {
+    var u = f.short !== undefined ? f.short : f.unit;
+    var a = d1 ? d1[f.key] : null, z = d28 ? d28[f.key] : null;
+    var dl = (d1 && d28) ? selfTestDeltaP(f, a, z) : null;
+    var val = (d1 && d28) ? selfTestEsc(a) + ' → <span style="color:var(--white);font-weight:600">' + selfTestEsc(z) + '</span>'
+      : '<span style="color:var(--white);font-weight:600">' + selfTestEsc(d28 ? z : a) + '</span>';
+    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid rgba(255,255,255,.07)">'
+      + '<div style="font-size:13px;color:var(--white);font-weight:600">' + f.label + '</div>'
+      + '<div style="display:flex;align-items:center;gap:10px"><div style="font-size:12.5px;color:var(--dim2)">' + val + (u ? ' ' + u : '') + '</div>'
+      + (dl ? '<div style="min-width:74px;text-align:center;font-size:11.5px;font-weight:700;padding:3px 7px;border-radius:6px;' + (dl.win ? 'background:rgba(34,197,94,.15);color:var(--green)' : 'background:rgba(255,255,255,.06);color:var(--dim2)') + '">' + (dl.win ? '✓ ' : '') + dl.text + '</div>' : '')
+      + '</div></div>';
+  }).join('');
+}
+
+function renderChallengeProgress(el) {
+  var info = readChallengeInfo(), ch = info.challenge || {}, total = ch.days || 28;
+  var hdr = document.querySelector('#screen-progress .sec-title'), sub = document.querySelector('#screen-progress .sec-sub');
+  if (hdr) hdr.innerHTML = '28 Day <em>Challenge</em>';
+  if (sub) sub.textContent = (ch.blockName ? ch.blockName + ' · ' : '') + 'Day 1 → Day 28';
+  var d = ch.startDate ? challengeDayOf(ch.startDate) : null;
+  var st = readSelfTests(), d1 = st.challenge_selftest_day1, d28 = st.challenge_selftest_day28;
+  var ymd = function(off){ if (!ch.startDate) return ''; var p = ch.startDate.split('-').map(Number); var x = new Date(p[0], p[1]-1, p[2] + off); return x.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' }); };
+  var card = function(title, body){ return '<div style="background:var(--black3);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:14px;margin:0 16px 14px"><div style="font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--gold);font-family:\'Barlow Condensed\',sans-serif;font-weight:700;margin-bottom:8px">' + title + '</div>' + body + '</div>'; };
+  var btn = function(label, fn){ return '<button onclick="' + fn + '" style="margin-top:10px;padding:10px 16px;background:var(--gold);border:none;border-radius:9px;color:var(--black);font-family:\'Bebas Neue\',sans-serif;font-size:15px;letter-spacing:.06em;cursor:pointer">' + label + '</button>'; };
+  var html = '';
+
+  // 1. Where they are in the block
+  var head, pct = 0;
+  if (d === null) head = 'Your coach will kick off Day 1 for the whole group.';
+  else if (d < 1) head = 'Starts ' + ymd(0) + '.';
+  else if (d > total) { head = 'Challenge complete — all ' + total + ' days.'; pct = 100; }
+  else { head = 'Day ' + d + ' of ' + total + ' · Week ' + Math.ceil(d / 7) + ' of 4'; pct = Math.round(d / total * 100); }
+  html += card('🔥 The Challenge', '<div style="font-family:\'Bebas Neue\',sans-serif;font-size:24px;color:var(--white);line-height:1.15">' + head + '</div>'
+    + (pct ? '<div style="height:6px;background:rgba(255,255,255,.08);border-radius:3px;margin-top:8px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:var(--gold)"></div></div>' : ''));
+
+  // 2. Consistency: this week vs last, streak, and each week of the block
+  if (d !== null && d >= 1) {
+    var s = syncStreak(), now = calcWeekScore().total, last = s.lastWeek, msg;
+    if (last === null) msg = 'Your first week — this sets your baseline.';
+    else if (now > last) msg = 'You’ve beaten last week (' + now + ' vs ' + last + ').';
+    else if (now === last) msg = last === 0 ? 'Last week: 0. One check-in beats it.' : 'You’ve matched last week (' + last + '). 1 more point beats it.';
+    else msg = 'Last week: ' + last + '. You’re at ' + now + ' — ' + (last - now + 1) + ' more to beat it by Saturday.';
+    var p = ch.startDate.split('-').map(Number), startMs = new Date(p[0], p[1]-1, p[2]).getTime(), endMs = startMs + 27 * 864e5;
+    var rows = [];
+    for (var off = 0; off >= -8; off--) {
+      var days = getWeekDays(off), ws = new Date(days[0].key + 'T00:00:00').getTime(), we = new Date(days[6].key + 'T00:00:00').getTime();
+      if (we < startMs || ws > endMs) continue;
+      rows.unshift({ off: off, label: days[0].key.slice(5).replace('-', '/') + '–' + days[6].key.slice(5).replace('-', '/'), score: calcWeekScore(off).total });
+    }
+    var weekRows = rows.map(function(r) {
+      return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0"><div style="width:84px;font-size:12px;color:var(--dim2)">' + r.label + '</div>'
+        + '<div style="flex:1;height:8px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden"><div style="height:100%;width:' + Math.round(r.score / 35 * 100) + '%;background:var(--gold)"></div></div>'
+        + '<div style="width:62px;text-align:right;font-size:13px;color:var(--white);font-weight:600">' + r.score + '<span style="color:var(--dim);font-size:11px">/35</span>' + (r.off === 0 ? '<div style="font-size:9px;color:var(--dim)">so far</div>' : '') + '</div></div>';
+    }).join('');
+    html += card('📈 Your Daily Five', '<div style="display:flex;justify-content:space-between;align-items:flex-end"><div><div style="font-family:\'Bebas Neue\',sans-serif;font-size:34px;color:var(--white);line-height:1">' + now + '<span style="font-size:16px;color:var(--dim)">/35 this week</span></div>'
+      + '<div style="font-size:12px;color:var(--dim2);margin-top:4px;line-height:1.5">' + msg + '</div></div>'
+      + '<div style="text-align:right;flex-shrink:0;margin-left:10px"><div style="font-family:\'Bebas Neue\',sans-serif;font-size:28px;color:var(--gold);line-height:1">🔥 ' + s.streak + '</div><div style="font-size:10px;color:var(--dim)">week streak</div></div></div>'
+      + (weekRows ? '<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,.07);padding-top:6px">' + weekRows + '</div>' : ''));
+  }
+
+  // 3. Your Baseline (Day 1)
+  var proto = d1 && d1.timeOfDay ? '<div style="font-size:11.5px;color:var(--dim2);margin-top:8px">Measured in the ' + selfTestEsc(d1.timeOfDay) + (d1.fasted === 'yes' ? ', fasted' : d1.fasted === 'no' ? ', not fasted' : '') + '.</div>' : '';
+  var baseBody;
+  if (d1) baseBody = selfTestRowsHtml(d1, null) + proto;
+  else if (d !== null && d >= 1 && d <= 2) baseBody = '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6">Not recorded yet. Five quick numbers — they’re what you’ll beat on Day 28.</div>' + btn('Record my baseline', "openSelfTestSheet('day1')");
+  else if (d !== null && d > 2) baseBody = '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6">No baseline was recorded. Your Day 28 numbers will be your starting line.</div>';
+  else baseBody = '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6">Opens on Day 1' + (ch.startDate ? ' (' + ymd(0) + ')' : '') + '.</div>';
+  html += card('📏 Your Baseline · Day 1', baseBody);
+
+  // 4. Your Retest (Day 28) + the comparison
+  var retBody;
+  if (d28) retBody = (d1 ? '<div style="font-size:12px;color:var(--dim2);margin-bottom:4px;line-height:1.5">Green is a win. Weight is shown for reference only.</div>' : '') + selfTestRowsHtml(d1, d28);
+  else if (d !== null && d >= total) retBody = '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6">It’s retest time.' + (d1 && d1.timeOfDay ? ' Match how you measured on Day 1.' : '') + '</div>' + btn('Do my retest', "openSelfTestSheet('day28')");
+  else retBody = '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6">Unlocks on Day 28' + (ch.startDate ? ' (' + ymd(total - 1) + ')' : '') + '.</div>';
+  html += card('🏁 Your Retest · Day 28', retBody);
+
+  el.innerHTML = html;
+}
 </script>
 </body>
 </html>

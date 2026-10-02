@@ -1976,6 +1976,7 @@ function renderProfile(clientId) {
       }).join('')}
     </div>
   `;
+  if (isChallengeClient(c)) renderChallengeProfileCard(c); // challenge participants only
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -4756,7 +4757,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=52';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=53';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4941,7 +4942,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=52',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=53',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -7167,7 +7168,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=52';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=53';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
@@ -7590,6 +7591,50 @@ function printChallengeReport(clientId) {
   win.document.close();
 }
 window.addEventListener('load', function(){ setTimeout(sweepChallengeSelfTests, 2500); });
+
+// ══════════════════════════════════════════════════════════════════
+// 28 DAY CHALLENGE — participant card on the client profile (NEW, additive)
+// ══════════════════════════════════════════════════════════════════
+// renderProfile has ONE guarded line that calls this for challenge
+// participants only. Shows the block, where they are, and the Day 1 / Day 28
+// self-test with changes; refreshes once if a new self-test just arrived.
+function renderChallengeProfileCard(c) {
+  var draw = function() {
+    var data = db();
+    var cx = (data.clients || []).find(function(x){ return x.id === c.id; });
+    var host = document.getElementById('profileContent');
+    if (!cx || !host || currentClientId !== cx.id) return;
+    var old = document.getElementById('challengeProfileCard'); if (old) old.remove();
+    var b = challengeBlockFor(cx, data), m = challengeMeasures(cx);
+    var d1 = m.challenge_selftest_day1 || null, d28 = m.challenge_selftest_day28 || null;
+    var st = b ? challengeBlockStatus(b) : { label:'No block assigned', color:'var(--red)' };
+    var rows = SELFTEST_MARKERS.map(function(mk) {
+      var a = d1 ? d1[mk.key] : '', z = d28 ? d28[mk.key] : '';
+      var dl = (d1 && d28) ? selfTestDelta(mk, a, z) : null;
+      return '<tr style="border-top:1px solid var(--border)"><td style="padding:6px;font-size:12px">' + mk.label + '</td>'
+        + '<td style="padding:6px;text-align:center;font-size:12px">' + (a !== '' ? esc(a) + (mk.unit ? ' ' + mk.unit : '') : '—') + '</td>'
+        + '<td style="padding:6px;text-align:center;font-size:12px">' + (z !== '' ? esc(z) + (mk.unit ? ' ' + mk.unit : '') : '—') + '</td>'
+        + '<td style="padding:6px;text-align:center;font-size:12px;font-weight:700;color:' + (dl && dl.win ? 'var(--green-br)' : 'var(--dim-2)') + '">' + (dl ? esc(dl.text) + (dl.win ? ' ✓' : '') : '—') + '</td></tr>';
+    }).join('');
+    var proto = d1 && d1.timeOfDay ? 'Day 1 measured in the ' + esc(d1.timeOfDay) + (d1.fasted === 'yes' ? ', fasted' : d1.fasted === 'no' ? ', not fasted' : '') + '. ' : '';
+    var html = '<div class="card" id="challengeProfileCard" style="border-color:rgba(201,162,39,.35)">'
+      + '<div class="card-title" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">🔥 28 Day Challenge'
+      + '<span style="font-size:11px;font-weight:700;letter-spacing:0;text-transform:none;color:' + st.color + '">' + esc(b ? b.name + ' · ' : '') + esc(st.label) + '</span></div>'
+      + '<table style="width:100%;border-collapse:collapse;margin-bottom:.5rem"><tr>'
+      + '<th style="padding:6px;text-align:left;font-size:9px;color:var(--dim)">MARKER</th><th style="padding:6px;font-size:9px;color:var(--dim)">DAY 1</th><th style="padding:6px;font-size:9px;color:var(--dim)">DAY 28</th><th style="padding:6px;font-size:9px;color:var(--dim)">CHANGE</th></tr>'
+      + rows + '</table>'
+      + '<div style="font-size:11px;color:var(--dim-2);line-height:1.6">' + proto
+      + (!d1 ? 'Baseline not recorded yet. ' : '') + (!d28 ? 'Retest not recorded yet. ' : '')
+      + 'Waist and resting HR down, push-ups and plank up = wins. Weight is shown neutrally.</div>'
+      + '<div style="display:flex;gap:8px;margin-top:.75rem;flex-wrap:wrap">'
+      + (d28 ? '<button class="btn sm gold" onclick="printChallengeReport(\'' + esc(cx.id) + '\')">Day 29 Report</button>' : '')
+      + '<button class="btn sm" onclick="nav(\'challenge\');renderChallengeBlocks();sweepChallengeSelfTests()">Open Challenge screen</button>'
+      + '</div></div>';
+    host.insertAdjacentHTML('afterbegin', html);
+  };
+  draw();
+  sweepChallengeSelfTests().then(function(n){ if (n) draw(); }).catch(function(){});
+}
 
 window.addEventListener('load', init);
 </script>
