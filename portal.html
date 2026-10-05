@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=55 -->
+<!-- portal cache-buster v=56 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2046,8 +2046,11 @@ function renderTodayChecklist(){
 }
 
 function updateTodayProgress(ci){
-  const scored=['protein','water','workout'];
-  const done=scored.filter(k=>ci[k]==='yes'||ci[k]===true||ci[k]==='rest').length;
+  // All five of the Daily Five (was protein/water/workout only, so the badge
+  // topped out at 3 / 5). Same yes rules as calcWeekScore: sleep = the 7+ hours
+  // yes (legacy numeric >=7 still counts), a logged rest day counts as the workout.
+  const yes=v=>v===true||v==='yes';
+  const done=[yes(ci.sleep)||(typeof ci.sleep==='number'&&ci.sleep>=7), yes(ci.protein), yes(ci.water), yes(ci.steps), yes(ci.workout)||ci.workout==='rest'].filter(Boolean).length;
   const el=document.getElementById('todayProgressBadge');
   if(el)el.textContent=`${done} / 5`;
 }
