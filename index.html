@@ -233,6 +233,10 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
   .stat-grid{grid-template-columns:1fr 1fr}
   .avatar-pick-grid{grid-template-columns:1fr 1fr}
   .form-grid,.two-col,.three-col{grid-template-columns:1fr}
+  /* 28 Day Challenge participant rows: stack instead of running off the card */
+  .ch-table tr{display:flex;flex-wrap:wrap;align-items:center;column-gap:4px}
+  .ch-table td{display:block}
+  .ch-table td.ch-acts{width:100%;white-space:normal !important;text-align:left !important;display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding-top:0 !important}
 }
 </style>
 </head>
@@ -4757,7 +4761,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=57';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=58';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4942,7 +4946,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=57',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=58',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -7174,7 +7178,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=57';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=58';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
@@ -7343,12 +7347,12 @@ function renderChallengeBlocks() {
       + '<td style="padding:8px 6px;font-size:11px;color:' + (hasProg ? 'var(--green-br)' : 'var(--red)') + '">' + (hasProg ? '✓ Program' : 'No program yet') + '</td>'
       + '<td style="padding:8px 6px;font-size:11px;color:' + (c.portalBlobId ? 'var(--green-br)' : 'var(--dim)') + '">' + (c.portalBlobId ? '✓ Linked' : 'Not linked') + '</td>'
       + '<td style="padding:8px 6px;font-size:11px;color:var(--dim-2)">' + (st.challenge_selftest_day1 ? '<span style="color:var(--green-br)">✓ Baseline</span>' : '— Baseline') + ' · ' + (st.challenge_selftest_day28 ? '<span style="color:var(--green-br)">✓ Retest</span>' : '— Retest') + '</td>'
-      + '<td style="padding:8px 6px;text-align:right;white-space:nowrap">' + (st.challenge_selftest_day28 ? '<button class="btn sm gold" onclick="printChallengeReport(\'' + esc(c.id) + '\')">Day 29 Report</button> ' : '') + '<button class="btn sm" onclick="exportClient(\'' + esc(c.id) + '\')">📲 Send link</button> ' + moveSelect(c) + ' <button class="btn sm" title="Delete participant" onclick="deleteChallengeParticipant(\'' + esc(c.id) + '\')">🗑</button></td>'
+      + '<td class="ch-acts" style="padding:8px 6px;text-align:right;white-space:nowrap">' + (st.challenge_selftest_day28 ? '<button class="btn sm gold" onclick="printChallengeReport(\'' + esc(c.id) + '\')">Day 29 Report</button> ' : '') + '<button class="btn sm" onclick="exportClient(\'' + esc(c.id) + '\')">📲 Send link</button> ' + moveSelect(c) + ' <button class="btn sm" title="Delete participant" onclick="deleteChallengeParticipant(\'' + esc(c.id) + '\')">🗑</button></td>'
       + '</tr>';
   };
   var table = function(list, emptyMsg) {
     if (!list.length) return '<div style="font-size:12px;color:var(--dim);padding:6px 0">' + emptyMsg + '</div>';
-    return '<table style="width:100%;border-collapse:collapse">' + list.map(row).join('') + '</table>';
+    return '<table class="ch-table" style="width:100%;border-collapse:collapse">' + list.map(row).join('') + '</table>';
   };
   var html = '<div class="card">'
     + '<div class="card-title">🔥 28 Day Challenge Blocks</div>'
