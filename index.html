@@ -4761,7 +4761,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=58';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=59';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4946,7 +4946,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=58',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=59',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -7151,6 +7151,24 @@ function challengeNextSundayYmd() {
   var n = new Date(); n.setDate(n.getDate() + ((7 - n.getDay()) % 7));
   return n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0') + '-' + String(n.getDate()).padStart(2,'0');
 }
+// Default Day 1 shown for a block that hasn't started. If the block's name
+// carries a date ("Oct 18", "Oct 18 Block", "October 18") and that date is a
+// Sunday from today on, use it — so "Oct 18" never quietly defaults to today.
+// Otherwise the next Sunday, as before.
+function challengeDefaultDay1(b) {
+  var m = String((b && b.name) || '').match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b/i);
+  if (m) {
+    var mon = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].indexOf(m[1].toLowerCase());
+    var day = Number(m[2]);
+    var today = new Date(); today.setHours(0,0,0,0);
+    var d = new Date(today.getFullYear(), mon, day);
+    if (d < today) d = new Date(today.getFullYear() + 1, mon, day);
+    if (d.getMonth() === mon && d.getDate() === day && d.getDay() === 0) {
+      return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+    }
+  }
+  return challengeNextSundayYmd();
+}
 function challengeTodayYmd() {
   var n = new Date();
   return n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0') + '-' + String(n.getDate()).padStart(2,'0');
@@ -7178,7 +7196,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=58';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=59';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
@@ -7369,7 +7387,7 @@ function renderChallengeBlocks() {
       + '<div><div style="font-family:Bebas Neue,sans-serif;font-size:22px;letter-spacing:.04em;color:var(--white)">' + esc(b.name) + '</div>'
       + '<div style="font-size:11px;font-weight:700;color:' + st.color + '">' + esc(st.label) + ' · ' + members.length + ' participant' + (members.length === 1 ? '' : 's') + '</div></div>'
       + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
-      + '<input type="date" id="chStart-' + esc(b.id) + '" value="' + esc(b.startDate || challengeNextSundayYmd()) + '" title="Day 1 — must be a Sunday" style="max-width:160px">'
+      + '<input type="date" id="chStart-' + esc(b.id) + '" value="' + esc(b.startDate || challengeDefaultDay1(b)) + '" title="Day 1 — must be a Sunday" style="max-width:160px">'
       + '<button class="btn ' + (b.startDate ? 'sm' : 'gold') + '" onclick="startChallengeBlock(\'' + esc(b.id) + '\')">' + (b.startDate ? 'Change Day 1' : '▶ Start Block') + '</button>'
       + (b.startDate ? '<button class="btn sm" onclick="sendChallengeBlock(\'' + esc(b.id) + '\')">Send to portals</button>' : '')
       + '<button class="btn sm" title="Delete block" onclick="deleteChallengeBlock(\'' + esc(b.id) + '\')">🗑 Delete block</button>'
