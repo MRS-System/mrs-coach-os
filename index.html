@@ -4757,7 +4757,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=56';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=57';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4942,7 +4942,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=56',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=57',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -7174,7 +7174,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=56';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=57';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
@@ -7343,7 +7343,7 @@ function renderChallengeBlocks() {
       + '<td style="padding:8px 6px;font-size:11px;color:' + (hasProg ? 'var(--green-br)' : 'var(--red)') + '">' + (hasProg ? '✓ Program' : 'No program yet') + '</td>'
       + '<td style="padding:8px 6px;font-size:11px;color:' + (c.portalBlobId ? 'var(--green-br)' : 'var(--dim)') + '">' + (c.portalBlobId ? '✓ Linked' : 'Not linked') + '</td>'
       + '<td style="padding:8px 6px;font-size:11px;color:var(--dim-2)">' + (st.challenge_selftest_day1 ? '<span style="color:var(--green-br)">✓ Baseline</span>' : '— Baseline') + ' · ' + (st.challenge_selftest_day28 ? '<span style="color:var(--green-br)">✓ Retest</span>' : '— Retest') + '</td>'
-      + '<td style="padding:8px 6px;text-align:right;white-space:nowrap">' + (st.challenge_selftest_day28 ? '<button class="btn sm gold" onclick="printChallengeReport(\'' + esc(c.id) + '\')">Day 29 Report</button> ' : '') + '<button class="btn sm" onclick="exportClient(\'' + esc(c.id) + '\')">📲 Send link</button> ' + moveSelect(c) + '</td>'
+      + '<td style="padding:8px 6px;text-align:right;white-space:nowrap">' + (st.challenge_selftest_day28 ? '<button class="btn sm gold" onclick="printChallengeReport(\'' + esc(c.id) + '\')">Day 29 Report</button> ' : '') + '<button class="btn sm" onclick="exportClient(\'' + esc(c.id) + '\')">📲 Send link</button> ' + moveSelect(c) + ' <button class="btn sm" title="Delete participant" onclick="deleteChallengeParticipant(\'' + esc(c.id) + '\')">🗑</button></td>'
       + '</tr>';
   };
   var table = function(list, emptyMsg) {
@@ -7368,6 +7368,7 @@ function renderChallengeBlocks() {
       + '<input type="date" id="chStart-' + esc(b.id) + '" value="' + esc(b.startDate || challengeNextSundayYmd()) + '" title="Day 1 — must be a Sunday" style="max-width:160px">'
       + '<button class="btn ' + (b.startDate ? 'sm' : 'gold') + '" onclick="startChallengeBlock(\'' + esc(b.id) + '\')">' + (b.startDate ? 'Change Day 1' : '▶ Start Block') + '</button>'
       + (b.startDate ? '<button class="btn sm" onclick="sendChallengeBlock(\'' + esc(b.id) + '\')">Send to portals</button>' : '')
+      + '<button class="btn sm" title="Delete block" onclick="deleteChallengeBlock(\'' + esc(b.id) + '\')">🗑 Delete block</button>'
       + '</div></div>'
       + table(members, 'No participants yet. Add them from New Client → Cohort → 28 Day Challenge.')
       + '</div>';
@@ -7379,6 +7380,42 @@ function renderChallengeBlocks() {
   el.innerHTML = html;
 }
 window.addEventListener('load', fillChallengeBlockPicker);
+
+// Delete a challenge participant (e.g. a test person) from the Challenge
+// screen. Same removal as deleteClient (unedited), but stays on this screen.
+function deleteChallengeParticipant(clientId) {
+  var data = db();
+  var c = (data.clients || []).find(function(x){ return x.id === clientId; });
+  if (!c) return;
+  if (!confirm('Delete ' + c.name + '? Their program, check-ins and self-tests are removed. This cannot be undone.')) return;
+  data.clients = data.clients.filter(function(x){ return x.id !== clientId; });
+  saveDb(data);
+  toast(c.name + ' deleted');
+  renderChallengeBlocks();
+  fillChallengeBlockPicker();
+}
+
+// Delete a block. Its participants are deleted too only if the coach says so;
+// otherwise they are kept and show under "Participants without a block".
+function deleteChallengeBlock(blockId) {
+  var data = db();
+  var b = challengeBlocks(data).find(function(x){ return x.id === blockId; });
+  if (!b) return;
+  var members = (data.clients || []).filter(function(c){ return isChallengeClient(c) && c.challengeBlockId === blockId; });
+  if (!confirm('Delete the block "' + b.name + '"? This cannot be undone.')) return;
+  var alsoPeople = members.length > 0 && confirm('Also delete its ' + members.length + ' participant' + (members.length === 1 ? '' : 's') + ' (' + members.map(function(c){ return c.name; }).join(', ') + ')?\n\nOK = delete them too\nCancel = keep them (they move to "Participants without a block")');
+  data.challengeBlocks = data.challengeBlocks.filter(function(x){ return x.id !== blockId; });
+  if (alsoPeople) {
+    var ids = members.map(function(c){ return c.id; });
+    data.clients = data.clients.filter(function(c){ return ids.indexOf(c.id) === -1; });
+  } else {
+    members.forEach(function(c){ c.challengeBlockId = ''; });
+  }
+  saveDb(data);
+  toast(b.name + ' deleted' + (members.length ? (alsoPeople ? ' with ' + members.length + ' participant' + (members.length === 1 ? '' : 's') : ' — participants kept') : ''));
+  renderChallengeBlocks();
+  fillChallengeBlockPicker();
+}
 
 // ══════════════════════════════════════════════════════════════════
 // 28 DAY CHALLENGE — BUILD 2: Day 1 / Day 28 self-test + Day 29 report
