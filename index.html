@@ -1799,8 +1799,9 @@ function renderProfile(clientId) {
       </div>
       <div class="btn-row">
         <button class="btn sm" onclick="editClient('${c.id}')">Edit</button>
-        <button class="btn sm green" onclick="printProgressReport('${c.id}')">📊 Report</button>
         <button class="btn sm" style="background:rgba(201,162,39,.12);color:var(--gold);border-color:rgba(201,162,39,.3)" onclick="printIntakeReport('${c.id}')">🎯 Intake Report</button>
+        ${c.measurements?.intake && c.measurements?.week4 ? `<button class="btn sm green" onclick="printCheckpointReport('${c.id}','week4')">📈 Week 4 Report</button>` : ''}
+        ${c.measurements?.intake && c.measurements?.week8 ? `<button class="btn sm green" onclick="printCheckpointReport('${c.id}','week8')">🏁 Week 8 Report</button>` : ''}
         <button class="btn sm" style="background:rgba(59,130,246,.1);color:var(--blue);border-color:rgba(59,130,246,.25)" onclick="exportClient('${c.id}')">📤 Export Client</button>
         ${c.status==='inactive'?`<span style="font-size:10px;color:var(--red);font-weight:700;padding:4px 8px;background:rgba(220,38,38,.1);border-radius:6px;border:1px solid rgba(220,38,38,.2)">INACTIVE — Wk ${c.dropoutWeek||'?'}</span>`:`<button class="btn sm" style="background:rgba(220,38,38,.1);color:var(--red);border-color:rgba(220,38,38,.2)" onclick="markInactive('${c.id}')">Mark Inactive</button>`}
         <button class="btn sm red" onclick="deleteClient('${c.id}')">Delete</button>
@@ -1930,7 +1931,7 @@ function renderProfile(clientId) {
         <button class="btn green" id="copyProgramBtn" onclick="copyProgram()">Copy Program</button>
         <button class="btn" onclick="saveProgramToClient()">Save to Profile</button>
         <button class="btn" onclick="printProg()">Program PDF</button>
-        <button class="btn" onclick="printProgressReport()">📊 Progress Report</button>
+        <button class="btn" onclick="printLatestReport()">📊 Latest Report</button>
       </div>
       <div id="genRecovery" class="btn-row" style="display:none;margin-top:.75rem">
         <button class="btn gold" onclick="retryGen()">↻ Retry — continue building</button>
@@ -4761,7 +4762,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=59';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=60';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4946,7 +4947,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=59',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=60',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5194,19 +5195,31 @@ function markCheckinWeekSeen(clientId, weekKey) {
 // and bucketed by PROGRAM week parsed from prog-w{N}-s{M}, never the calendar
 // week it arrived in. scheduled spans weeks 1..maxReachedWeek (future/unreached
 // weeks excluded — the fairness gate), capped per week at the prescribed freq.
-function computeCompliance(c) {
+// Compliance = sessions done / sessions scheduled, by PROGRAM week.
+// A session counts as done if the client marked it done or logged anything
+// for it. Counted through the last program week the client reached. That
+// latest week is left out while it's genuinely still underway — unfinished AND
+// the calendar (program start + 7 days per week, same start date the Week 4
+// reminder uses) says they're in it now — so testing or reporting mid-week
+// doesn't count the rest of the week as misses. Once the week is over on the
+// calendar, its missing sessions count.
+// computeComplianceDetail also says how many counted sessions had weights /
+// reps logged, so reports can show "6 of 8 sessions" and the % from ONE count.
+function computeComplianceDetail(c) {
   const weeks = (c && c.weeklyData) || [];
   if (!weeks.length) return null;
   // Prescribed sessions/week — constant per client; same source as before.
   let freq = 0;
   weeks.forEach(w => { const f = (w.scoreBreakdown && w.scoreBreakdown.freq) || 0; if (f > freq) freq = f; });
   if (freq <= 0) return null;
-  const doneByWeek = {}; // program week N -> Set(distinct session id)
-  const addDone = (sessId) => {
+  const doneByWeek = {};   // program week N -> Set(distinct session id)
+  const loggedIds = {};    // session id -> true when sets/weights were logged
+  const addDone = (sessId, logged) => {
     const m = /^prog-w(\d+)-s\d+$/.exec(sessId);
     if (!m) return;
     const n = m[1];
     (doneByWeek[n] = doneByWeek[n] || new Set()).add(sessId);
+    if (logged) loggedIds[sessId] = true;
   };
   weeks.forEach(w => {
     const sl = w.slotLogs || {};
@@ -5218,23 +5231,42 @@ function computeCompliance(c) {
         const r = recs[k];
         return r && (r.weight || r.reps || r.rpe || r.sets || r.note);
       });
-      if (markedDone || hasRealLog) addDone(sessId);
+      if (markedDone || hasRealLog) addDone(sessId, hasRealLog);
     });
     (w.workoutLogs || []).forEach(wl => {
-      if (wl && wl.week != null && wl.session != null) addDone('prog-w' + wl.week + '-s' + wl.session);
+      if (wl && wl.week != null && wl.session != null) addDone('prog-w' + wl.week + '-s' + wl.session, true);
     });
   });
   let reachedMax = 0;
   Object.keys(doneByWeek).forEach(n => { const x = parseInt(n, 10); if (x > reachedMax) reachedMax = x; });
   if (reachedMax <= 0) return null; // no attendance data yet -> "—"
-  let done = 0, scheduled = 0;
-  for (let n = 1; n <= reachedMax; n++) {
+  const gotIn = n => doneByWeek[n] ? Math.min(doneByWeek[n].size, freq) : 0;
+  // Latest week: left out only while it's unfinished and still underway.
+  const prog = (c.programs || []).find(p => p.id === c.activeProgramId);
+  const start = prog ? (prog.date || c.createdAt) : null;
+  const calendarWeek = start ? Math.floor((Date.now() - start) / (7 * 864e5)) + 1 : null;
+  let lastWeek = reachedMax;
+  const inProgress = reachedMax > 1 && gotIn(reachedMax) < freq && calendarWeek !== null && calendarWeek <= reachedMax;
+  if (inProgress) lastWeek = reachedMax - 1;
+  let done = 0, scheduled = 0, logged = 0;
+  for (let n = 1; n <= lastWeek; n++) {
     scheduled += freq;
-    const got = doneByWeek[n] ? doneByWeek[n].size : 0;
-    done += Math.min(got, freq); // per-week cap: an over-logged week can't exceed 100%
+    done += gotIn(n); // per-week cap: an over-logged week can't exceed 100%
+    const ids = doneByWeek[n] ? Array.from(doneByWeek[n]).sort().slice(0, freq) : [];
+    logged += ids.filter(id => loggedIds[id]).length;
   }
   if (scheduled <= 0) return null;
-  return Math.min(100, Math.round(done / scheduled * 100));
+  return {
+    pct: Math.min(100, Math.round(done / scheduled * 100)),
+    done, scheduled, logged, freq,
+    weeksCounted: lastWeek,
+    inProgressWeek: inProgress ? reachedMax : null,
+    inProgressDone: inProgress ? gotIn(reachedMax) : 0
+  };
+}
+function computeCompliance(c) {
+  const d = computeComplianceDetail(c);
+  return d ? d.pct : null;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -5772,9 +5804,10 @@ function printProgressReport(clientId) {
 
   const hasData = em.intake || em.week4 || em.week8;
   const cw = c.weeklyData || [];
-  const totalSess = cw.reduce((a,w)=>a+((w.scoreBreakdown&&w.scoreBreakdown.freq)||0),0);
-  const doneSess  = cw.reduce((a,w)=>a+(w.workoutLogs||[]).length,0);
-  const compliancePct = computeCompliance(c);
+  const compDetail = computeComplianceDetail(c);
+  const totalSess = compDetail ? compDetail.scheduled : 0;
+  const doneSess  = compDetail ? compDetail.done : 0;
+  const compliancePct = compDetail ? compDetail.pct : null;
   const latest = em.week8 || em.week4;
 
   function pct(from, to, lowerBetter) {
@@ -6590,6 +6623,276 @@ function printIntakeReport(clientId) {
   win.document.close();
 }
 
+// ══════════════════════════════════════════════════════════════════
+// CHECKPOINT REPORT — Week 4 / Week 8, in the Intake Report's design
+// (NEW, non-protected, additive). Same score system (calcPSS), the same
+// standards (assessGraduation / MRS_STANDARDS) and clinical ranges as the
+// Intake Report, shown as Intake → checkpoint. Change colours follow the
+// client's goal: green = the right direction, red = the wrong one, grey =
+// steady (under 1%) or a measure with no "better" direction for that goal.
+// ══════════════════════════════════════════════════════════════════
+// The newest report this client has: Week 8 → Week 4 → Intake.
+function printLatestReport(clientId) {
+  const c = clientId ? (db().clients.find(x=>x.id===clientId)||getClient()) : getClient();
+  if (!c) return;
+  const m = c.measurements || {};
+  if (m.intake && m.week8) return printCheckpointReport(c.id, 'week8');
+  if (m.intake && m.week4) return printCheckpointReport(c.id, 'week4');
+  return printIntakeReport(c.id);
+}
+
+function printCheckpointReport(clientId, cp) {
+  const c = clientId ? (db().clients.find(x=>x.id===clientId)||getClient()) : getClient();
+  if (!c) return;
+  cp = cp === 'week8' ? 'week8' : 'week4';
+  const m = c.measurements || {};
+  const intake = enrichRecord(m.intake);
+  const cur = enrichRecord(m[cp]);
+  if (!intake || !cur) { alert('This report needs both the intake and the ' + CP_LABELS[cp] + ' measurements.'); return; }
+  const mid = cp === 'week8' ? enrichRecord(m.week4) : null;   // Week 8 report also shows Week 4
+  const cpShort = cp === 'week8' ? 'Week 8' : 'Week 4';
+  const gender = c.gender || 'M';
+  const goal = String(c.goal || '');
+  const goalLoss = /fat loss|weight loss/i.test(goal);
+  const goalGain = /muscle|strength|gain/i.test(goal) && !goalLoss;
+  const num = v => { const x = parseFloat(v); return isNaN(x) ? null : x; };
+  const sysOf = bp => (typeof bp === 'string' && bp.indexOf('/') > 0) ? num(bp.split('/')[0]) : null;
+
+  // dir: 'down' = lower is better, 'up' = higher is better, 'none' = no colour
+  function change(from, to, dir, unit, isBP) {
+    const a = isBP ? sysOf(from) : num(from), b = isBP ? sysOf(to) : num(to);
+    if (a === null || b === null || a === 0) return '<span style="color:#bbb">—</span>';
+    const p = (b - a) / a * 100;
+    const steady = Math.abs(p) < 1;
+    let col = '#888';
+    if (!steady && dir !== 'none') col = ((dir === 'down') === (p < 0)) ? '#1a7a4a' : '#dc2626';
+    const diff = b - a;
+    const shown = isBP ? Math.round(diff) : Math.abs(diff) < 1 ? +diff.toFixed(3) : diff.toFixed(1);
+    const diffTxt = (diff > 0 ? '+' : '') + shown + (isBP ? ' sys' : unit ? ' ' + unit : '');
+    return '<span style="font-weight:800;color:' + col + '">' + (steady ? 'Steady' : diffTxt) + '</span>'
+      + '<div style="font-size:9px;color:#aaa">' + (p > 0 ? '+' : '') + p.toFixed(1) + '%</div>';
+  }
+  const thCols = '<th>Intake</th>' + (mid ? '<th>Week 4</th>' : '') + '<th>' + cpShort + '</th><th>Change</th>';
+  const cell = (v, u, bold) => '<td style="padding:.55rem .75rem;text-align:center;font-size:14px;font-weight:' + (bold ? '800' : '600') + ';color:' + (v ? '#1a1a1a' : '#bbb') + '">' + (v || '—') + (v && u ? '<span style="font-size:9px;color:#aaa"> ' + u + '</span>' : '') + '</td>';
+
+  // ── SCORE HERO — Starting Score → checkpoint score ──
+  const pillarDefs = [
+    {key:'perfScore',   label:'Performance', sub:'KB DL · Push-Ups · Row · Plank'},
+    {key:'structScore', label:'Structure',   sub:'WHR · Body Fat'},
+    {key:'cardioScore', label:'Cardio',      sub:'Resting HR · Blood Pressure'},
+  ];
+  const pssI = calcPSS(intake, gender) || {}, pssC = calcPSS(cur, gender) || {};
+  // Composite compares like with like: only pillars scored at BOTH checkpoints.
+  const both = pillarDefs.filter(p => pssI[p.key] != null && pssC[p.key] != null);
+  const avgOf = (pss) => both.length ? Math.round(both.reduce((a,p)=>a+pss[p.key],0)/both.length*10)/10 : null;
+  const compI = avgOf(pssI), compC = avgOf(pssC);
+  const delta = (a, b) => (a == null || b == null) ? '' : (b - a === 0 ? '<span style="color:#888">±0</span>'
+    : '<span style="color:' + (b > a ? '#1a7a4a' : '#dc2626') + '">' + (b > a ? '▲ +' : '▼ ') + (Math.round((b - a) * 10) / 10) + '</span>');
+  const pillarCards = pillarDefs.map(p => {
+    const a = pssI[p.key], b = pssC[p.key];
+    const col = scoreColor(b);
+    return '<div style="flex:1;background:#f8f7f3;border:1px solid #e8e5db;border-radius:10px;padding:12px 14px;text-align:center">'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#888;margin-bottom:4px">' + p.label + '</div>'
+      + '<div style="font-family:Bebas Neue,sans-serif;font-size:34px;line-height:1;color:' + (b == null ? '#bbb' : col) + '">' + (b == null ? '—' : b) + '<span style="font-size:14px;color:#aaa">/10</span></div>'
+      + '<div style="font-size:10px;font-weight:700;margin-top:2px">' + (b == null ? '<span style="color:#bbb">No data</span>' : (a == null ? '<span style="color:#aaa">New this checkpoint</span>' : '<span style="color:#888">from ' + a + '</span> ' + delta(a, b))) + '</div>'
+      + '<div style="font-size:8px;color:#aaa;margin-top:4px;line-height:1.3">' + p.sub + '</div>'
+      + '</div>';
+  }).join('');
+  const scoreHero = '<div class="hero-stat" style="flex-direction:column;align-items:stretch;gap:14px">'
+    + '<div style="display:flex;align-items:center;gap:20px">'
+    + '<div class="hero-number" style="color:' + (compC == null ? '#bbb' : scoreColor(compC)) + '">'
+      + (compI == null ? '' : '<span style="font-size:30px;color:#bbb">' + compI + ' → </span>') + (compC == null ? '—' : compC) + '<span style="font-size:22px;color:#aaa">/10</span></div>'
+    + '<div class="hero-label"><strong>Your ' + cpShort + ' Score ' + (compI != null && compC != null ? delta(compI, compC) : '') + '</strong>'
+    + 'Same scoring system as your intake, so the numbers compare directly: from your Starting Score of '
+    + (compI == null ? '—' : compI) + ' to ' + (compC == null ? '—' : compC) + ' today.</div>'
+    + '</div>'
+    + '<div style="display:flex;gap:8px">' + pillarCards + '</div>'
+    + '</div>';
+
+  // ── PERFORMANCE — intake → checkpoint, vs the avatar standard ──
+  const grad = assessGraduation(c, cur);
+  const PERF = [
+    {key:'kbdl',   label:'KB Deadlift', unit:'reps', lower:false},
+    {key:'pushups',label:'Push-Ups',    unit:'reps', lower:false},
+    {key:'plank',  label:'Plank Hold',  unit:'sec',  lower:false},
+    {key:'row',    label:'500m Row',    unit:'sec',  lower:true },
+  ];
+  const perfRows = PERF.map(f => {
+    const iv = intake[f.key], mv = mid && mid[f.key], cv = cur[f.key];
+    if (!iv && !cv) return '';
+    const mx = grad && grad.metrics && grad.metrics[f.key];
+    let stdCell = '<span style="color:#bbb">—</span>';
+    if (mx && cv && !isNaN(mx.val)) {
+      if (mx.passed) stdCell = '<span style="font-size:11px;font-weight:800;color:#1a7a4a">✓ MET</span>';
+      else { const gap = f.lower ? Math.round(mx.val - mx.target) : Math.round(mx.target - mx.val);
+        stdCell = '<span style="font-size:11px;font-weight:800;color:#c9a227">' + (f.lower ? gap + ' sec to cut' : gap + ' ' + f.unit + ' to go') + '</span>'; }
+      stdCell += '<div style="font-size:9px;color:#aaa">target ' + mx.target + ' ' + f.unit + '</div>';
+    }
+    let lbl = f.label;
+    if (f.key === 'pushups' && intake.putype === 'Knee' && cur.putype === 'Full') lbl += ' <span style="font-size:9px;color:#1a7a4a;font-weight:800">KNEE → FULL</span>';
+    return '<tr style="border-bottom:1px solid #f0ede4">'
+      + '<td style="padding:.55rem .75rem;font-size:12px;color:#555;font-weight:500">' + lbl + '</td>'
+      + cell(iv, f.unit) + (mid ? cell(mv, f.unit) : '') + cell(cv, f.unit, true)
+      + '<td style="padding:.55rem .75rem;text-align:center">' + change(iv, cv, f.lower ? 'down' : 'up', f.key === 'row' || f.key === 'plank' ? 'sec' : '') + '</td>'
+      + '<td style="padding:.55rem .75rem;text-align:center">' + stdCell + '</td>'
+      + '</tr>';
+  }).join('');
+  const perfSection = perfRows ? (
+    '<div class="section-title" style="display:flex;justify-content:space-between;align-items:baseline">'
+    + '<span>PERFORMANCE — INTAKE → ' + cpShort.toUpperCase() + '</span>'
+    + '<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">vs YOUR ' + String(c.avatar||'').toUpperCase() + ' · ' + String(c.level||'').toUpperCase() + ' STANDARD</span></div>'
+    + '<table><thead><tr><th>Movement</th>' + thCols + '<th>Standard</th></tr></thead><tbody>' + perfRows + '</tbody></table>'
+  ) : '';
+
+  // ── BODY COMPOSITION — intake → checkpoint ──
+  const BODY = [
+    {k:'weight', label:'Body Weight',     u:'lbs', dir: goalLoss ? 'down' : goalGain ? 'up' : 'none'},
+    {k:'waist',  label:'Waist',           u:'in',  dir:'down'},
+    {k:'hips',   label:'Hips',            u:'in',  dir: goalLoss ? 'down' : 'none'},
+    {k:'whr',    label:'Waist-Hip Ratio', u:'',    dir:'down'},
+    {k:'bodyfat',label:'Body Fat',        u:'%',   dir:'down', du:'pts'},
+    {k:'smm',    label:'Muscle Mass',     u:'lbs', dir:'up'},
+  ];
+  function whrClinical(whr) {
+    const w = num(whr); if (w === null) return null;
+    const healthy = gender==='F'?0.80:0.90, moderate = gender==='F'?0.85:0.95;
+    return w<=healthy ? {label:'Healthy Range', color:'#1a7a4a'} : w<=moderate ? {label:'Moderate Risk', color:'#c9a227'} : {label:'Elevated Risk', color:'#dc2626'};
+  }
+  function bfClinical(bf) {
+    const b = num(bf); if (b === null) return null;
+    const fit = gender==='F'?24:17, ok = gender==='F'?31:24;
+    return b<=fit ? {label:'Fitness / Athletic', color:'#1a7a4a'} : b<=ok ? {label:'Acceptable', color:'#c9a227'} : {label:'Above Range', color:'#dc2626'};
+  }
+  const tag = cls => cls ? ' <span style="padding:2px 7px;background:' + cls.color + '22;border-radius:5px;font-size:9px;font-weight:700;color:' + cls.color + '">' + cls.label + '</span>' : '';
+  const bodyRows = BODY.map(f => {
+    const iv = intake[f.k], mv = mid && mid[f.k], cv = cur[f.k];
+    if (!iv && !cv) return '';
+    const cls = f.k === 'whr' ? whrClinical(cv) : f.k === 'bodyfat' ? bfClinical(cv) : null;
+    return '<tr style="border-bottom:1px solid #f0ede4">'
+      + '<td style="padding:.55rem .75rem;font-size:12px;color:#555;font-weight:500">' + f.label + tag(cls) + '</td>'
+      + cell(iv, f.u) + (mid ? cell(mv, f.u) : '') + cell(cv, f.u, true)
+      + '<td style="padding:.55rem .75rem;text-align:center">' + change(iv, cv, f.dir, f.du || f.u) + '</td></tr>';
+  }).join('');
+  const bodySection = bodyRows ? (
+    '<div class="section-title" style="display:flex;justify-content:space-between;align-items:baseline">'
+    + '<span>BODY COMPOSITION — INTAKE → ' + cpShort.toUpperCase() + '</span>'
+    + '<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">WHO · ACSM RANGES</span></div>'
+    + '<table><thead><tr><th>Measure</th>' + thCols + '</tr></thead><tbody>' + bodyRows + '</tbody></table>'
+  ) : '';
+
+  // ── CARDIOVASCULAR — intake → checkpoint ──
+  function rhrClass(bpm) { const r = num(bpm); if (r === null) return null;
+    if (r <= 60) return {label:'Athletic', color:'#1a7a4a'}; if (r <= 70) return {label:'Good', color:'#1a7a4a'};
+    if (r <= 80) return {label:'Average', color:'#c9a227'}; if (r <= 90) return {label:'Above Average Risk', color:'#f97316'};
+    return {label:'Needs Attention', color:'#dc2626'}; }
+  function bpClass(bp) { if (!bp || typeof bp !== 'string') return null; const parts = bp.split('/'); if (parts.length !== 2) return null;
+    const sys = parseFloat(parts[0]), dia = parseFloat(parts[1]); if (isNaN(sys)||isNaN(dia)) return null;
+    if (sys < 120 && dia < 80) return {label:'Normal', color:'#1a7a4a'}; if (sys < 130 && dia < 80) return {label:'Elevated', color:'#c9a227'};
+    if (sys < 140 || dia < 90) return {label:'Stage 1 HTN', color:'#f97316'}; return {label:'Stage 2 HTN — Refer to physician', color:'#dc2626'}; }
+  const hasCardio = intake.rhr || intake.bp || cur.rhr || cur.bp || (mid && (mid.rhr || mid.bp));
+  const cardioSection = hasCardio ? (
+    '<div class="section-title" style="display:flex;justify-content:space-between;align-items:baseline">'
+    + '<span>CARDIOVASCULAR — INTAKE → ' + cpShort.toUpperCase() + '</span>'
+    + '<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">AHA/ACC RANGES</span></div>'
+    + '<table><thead><tr><th>Measure</th>' + thCols + '</tr></thead><tbody>'
+    + '<tr style="border-bottom:1px solid #f0ede4"><td style="padding:.55rem .75rem;font-size:12px;color:#555;font-weight:500">Resting Heart Rate' + tag(rhrClass(cur.rhr)) + '</td>'
+      + cell(intake.rhr, 'bpm') + (mid ? cell(mid.rhr, 'bpm') : '') + cell(cur.rhr, 'bpm', true) + '<td style="padding:.55rem .75rem;text-align:center">' + change(intake.rhr, cur.rhr, 'down', 'bpm') + '</td></tr>'
+    + '<tr style="border-bottom:1px solid #f0ede4"><td style="padding:.55rem .75rem;font-size:12px;color:#555;font-weight:500">Blood Pressure' + tag(bpClass(cur.bp)) + '</td>'
+      + cell(intake.bp, '') + (mid ? cell(mid.bp, '') : '') + cell(cur.bp, '', true) + '<td style="padding:.55rem .75rem;text-align:center">' + change(intake.bp, cur.bp, 'down', '', true) + '</td></tr>'
+    + '</tbody></table>'
+  ) : '<div style="font-size:11px;color:#aaa;font-style:italic;margin:-12px 0 24px">Resting heart rate and blood pressure weren\'t recorded — add them at the next checkpoint to track heart health.</div>';
+
+  // ── COMPLIANCE — one count for the % and the sessions line ──
+  const cd = computeComplianceDetail(c);
+  const compSection = cd ? (
+    '<div class="section-title">TRAINING CONSISTENCY</div>'
+    + '<div style="display:flex;align-items:center;gap:16px;margin-bottom:24px">'
+    + '<div style="font-family:Bebas Neue,sans-serif;font-size:42px;color:' + (cd.pct>=80?'#1a7a4a':cd.pct>=60?'#c9a227':'#dc2626') + ';line-height:1">' + cd.pct + '%</div>'
+    + '<div><div style="font-size:13px;font-weight:600;color:#1a1a1a">' + cd.done + ' of ' + cd.scheduled + ' sessions completed</div>'
+    + '<div style="font-size:11px;color:#888">Program weeks 1–' + cd.weeksCounted + ' · ' + cd.freq + 'x/week'
+      + (cd.inProgressWeek ? ' · week ' + cd.inProgressWeek + ' in progress (' + cd.inProgressDone + ' of ' + cd.freq + ' so far), counted once finished' : '') + '</div>'
+    + '<div style="font-size:11px;color:#888">Workout details (weights, reps or notes) logged on ' + cd.logged + ' of ' + cd.done + ' sessions</div>'
+    + '<div style="width:200px;height:6px;background:#f0ede4;border-radius:3px;overflow:hidden;margin-top:6px"><div style="width:' + cd.pct + '%;height:100%;background:' + (cd.pct>=80?'#1a7a4a':cd.pct>=60?'#c9a227':'#dc2626') + '"></div></div>'
+    + '</div></div>'
+  ) : '';
+
+  const taglines = {
+    Comeback:"You had it before. You proved it again.",
+    Workhorse:"The work had a direction. The results speak.",
+    'Built Different':"You're not just losing weight. You're building something.",
+    OG:"Strong. Capable. Still here.",
+    Builder:"The system worked. The numbers prove it.",
+    Apex:"That's what separating looks like on paper."
+  };
+  const intro = cp === 'week8'
+    ? 'Eight weeks. Here is the full story — intake, Week 4 and today — measured with the same tests and the same score.'
+    : 'Four weeks in. Same tests, same scoring as your intake — here is exactly what changed, and how close you are to your <strong style="color:#1a1a1a">' + c.avatar + ' ' + c.level + '</strong> standard.';
+
+  const html = '<!DOCTYPE html>'
+    + '<html lang="en"><head><meta charset="UTF-8">'
+    + '<title>MRS™ ' + CP_LABELS[cp] + ' — ' + c.name + '</title>'
+    + '<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">'
+    + '<style>'
+    + '*{box-sizing:border-box;margin:0;padding:0}'
+    + 'body{font-family:Barlow,sans-serif;background:#fff;color:#1a1a1a;max-width:760px;margin:0 auto;padding:40px 32px}'
+    + '.hero{background:#0f0f0c;border-radius:12px;padding:28px 32px;margin-bottom:28px;display:flex;justify-content:space-between;align-items:flex-end}'
+    + '.brand{font-family:Bebas Neue,sans-serif;font-size:32px;letter-spacing:.06em;color:#fff;line-height:1}'
+    + '.brand em{color:#c9a227;font-style:normal}'
+    + '.brand-sub{font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.4);margin-top:3px}'
+    + '.client-block{text-align:right}'
+    + '.client-name{font-family:Bebas Neue,sans-serif;font-size:22px;letter-spacing:.04em;color:#fff;line-height:1;margin-bottom:4px}'
+    + '.client-meta{font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:#c9a227}'
+    + '.section-title{font-family:Bebas Neue,sans-serif;font-size:18px;letter-spacing:.05em;color:#0f0f0c;border-bottom:2px solid #0f0f0c;padding-bottom:5px;margin-bottom:14px}'
+    + '.hero-stat{background:#f8f7f3;border-radius:10px;padding:20px 24px;margin-bottom:28px;display:flex;align-items:center;gap:20px;border:1px solid #e8e5db}'
+    + '.hero-number{font-family:Bebas Neue,sans-serif;font-size:52px;color:#c9a227;line-height:1;white-space:nowrap}'
+    + '.hero-label{font-size:13px;color:#555;line-height:1.5}'
+    + '.hero-label strong{color:#1a1a1a;display:block;font-size:15px;margin-bottom:2px}'
+    + 'table{width:100%;border-collapse:collapse;margin-bottom:28px}'
+    + 'th{font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#888;padding:.5rem .75rem;border-bottom:2px solid #0f0f0c;text-align:center}'
+    + 'th:first-child{text-align:left}'
+    + '.quote{background:#0f0f0c;border-radius:10px;padding:20px 24px;margin-bottom:24px}'
+    + '.quote-text{font-family:Bebas Neue,sans-serif;font-size:20px;letter-spacing:.04em;color:#f2f0e8;line-height:1.2}'
+    + '.quote-attr{font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:#c9a227;margin-top:8px}'
+    + '.footer-bar{display:flex;justify-content:space-between;align-items:center;border-top:1px solid #e8e5db;padding-top:12px;margin-top:8px}'
+    + '.footer-brand{font-family:Barlow Condensed,sans-serif;font-size:8px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#bbb}'
+    + '.footer-brand em{color:#c9a227;font-style:normal}'
+    + '.legend{font-size:10px;color:#888;margin:-18px 0 24px}'
+    + '.print-btn{position:fixed;top:1rem;right:1rem;padding:.6rem 1.2rem;background:#c9a227;color:#0f0f0c;border:none;border-radius:8px;font-family:Bebas Neue,sans-serif;font-size:15px;letter-spacing:.08em;cursor:pointer}'
+    + '@media print{.print-btn{display:none}body{padding:24px 28px}}'
+    + '</style></head><body>'
+    + '<button class="print-btn" onclick="document.fonts.ready.then(()=>window.print())">PRINT / PDF</button>'
+    + '<div class="hero">'
+    + '<div><div class="brand">MRS<em>™</em></div>'
+    + '<div class="brand-sub">Metabolic Rebuild System™ · ' + CP_LABELS[cp] + '</div></div>'
+    + '<div class="client-block">'
+    + '<div class="client-name">' + c.name + '</div>'
+    + '<div class="client-meta">' + c.avatar + ' · ' + c.level + ' · ' + c.freq + '</div>'
+    + '<div class="client-meta" style="color:rgba(255,255,255,.4);margin-top:2px">' + cpShort + ' tested ' + new Date(cur.date || Date.now()).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) + '</div>'
+    + '</div></div>'
+    + '<div style="font-size:13px;color:#555;line-height:1.6;margin-bottom:24px">' + intro + '</div>'
+    + scoreHero
+    + perfSection
+    + bodySection
+    + cardioSection
+    + '<div class="legend"><span style="color:#1a7a4a;font-weight:800">Green</span> = moving the right way for your goal · <span style="color:#dc2626;font-weight:800">Red</span> = the wrong way · <span style="color:#888;font-weight:800">Steady / grey</span> = under 1% change, or no target direction</div>'
+    + compSection
+    + '<div class="quote">'
+    + '<div class="quote-text">' + (taglines[c.avatar] || 'Built For The Moment™.') + '</div>'
+    + '<div class="quote-attr">— MRS™ · ' + c.avatar + ' · Built For The Moment™</div>'
+    + '</div>'
+    + '<div class="footer-bar"><div>'
+    + '<div class="footer-brand"><em>MRS™</em> · Metabolic Rebuild System™ · Built For The Moment™ · Justin Holmes</div>'
+    + '<div class="footer-brand" style="margin-top:3px">Generated ' + new Date().toLocaleDateString() + '</div>'
+    + '</div></div>'
+    + '<script>document.fonts.ready.then(()=>{});<\/script>'
+    + '</body></html>';
+
+  const win = window.open('','_blank');
+  if (!win) { alert('Allow pop-ups then try again.'); return; }
+  win.document.write(html);
+  win.document.close();
+}
+
 
 // ══════════════════════════════════════════════════════════════════
 // ANALYTICS DASHBOARD
@@ -7196,7 +7499,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=59';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=60';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
