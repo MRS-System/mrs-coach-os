@@ -5261,7 +5261,8 @@ function computeComplianceDetail(c) {
     done, scheduled, logged, freq,
     weeksCounted: lastWeek,
     inProgressWeek: inProgress ? reachedMax : null,
-    inProgressDone: inProgress ? gotIn(reachedMax) : 0
+    inProgressDone: inProgress ? gotIn(reachedMax) : 0,
+    weeks: Array.from({length: reachedMax}, (_, i) => ({ week: i + 1, done: gotIn(i + 1), inProgress: inProgress && i + 1 === reachedMax }))
   };
 }
 function computeCompliance(c) {
@@ -6699,13 +6700,28 @@ function printCheckpointReport(clientId, cp) {
       + '<div style="font-size:8px;color:#aaa;margin-top:4px;line-height:1.3">' + p.sub + '</div>'
       + '</div>';
   }).join('');
+  // Score gauge: 0–10 dial, red / gold / green zones, needle = today, grey tick = intake.
+  function gauge(vNow, vThen) {
+    const cx = 130, cy = 128, r = 100;
+    const pt = (v, rr) => { const t = Math.PI * (1 - Math.max(0, Math.min(10, v)) / 10); return [cx + rr * Math.cos(t), cy - rr * Math.sin(t)]; };
+    const arc = (a, b, col) => { const p1 = pt(a, r), p2 = pt(b, r); return '<path d="M' + p1[0].toFixed(1) + ' ' + p1[1].toFixed(1) + ' A' + r + ' ' + r + ' 0 0 1 ' + p2[0].toFixed(1) + ' ' + p2[1].toFixed(1) + '" fill="none" stroke="' + col + '" stroke-width="20"/>'; };
+    let g = '<svg viewBox="0 0 260 140" width="260" height="140" style="display:block">'
+      + arc(0, 4, '#f3c9c9') + arc(4, 7, '#f1e2b0') + arc(7, 10, '#c4e3d1');
+    [0, 2, 4, 6, 8, 10].forEach(v => { const a = pt(v, r + 16); g += '<text x="' + a[0].toFixed(1) + '" y="' + (a[1] + 3).toFixed(1) + '" text-anchor="middle" font-family="Barlow Condensed,sans-serif" font-size="9" font-weight="700" fill="#aaa">' + v + '</text>'; });
+    if (vNow != null) g += arc(0, vNow, scoreColor(vNow));
+    if (vThen != null) { const a = pt(vThen, r - 13), b = pt(vThen, r + 11); g += '<line x1="' + a[0].toFixed(1) + '" y1="' + a[1].toFixed(1) + '" x2="' + b[0].toFixed(1) + '" y2="' + b[1].toFixed(1) + '" stroke="#555" stroke-width="3" stroke-linecap="round"/>'
+      + '<text x="' + pt(vThen, r - 26)[0].toFixed(1) + '" y="' + (pt(vThen, r - 26)[1] + 3).toFixed(1) + '" text-anchor="middle" font-family="Barlow Condensed,sans-serif" font-size="8" font-weight="700" fill="#888">INTAKE</text>'; }
+    if (vNow != null) { const n = pt(vNow, r - 22); g += '<line x1="' + cx + '" y1="' + cy + '" x2="' + n[0].toFixed(1) + '" y2="' + n[1].toFixed(1) + '" stroke="#0f0f0c" stroke-width="4" stroke-linecap="round"/><circle cx="' + cx + '" cy="' + cy + '" r="8" fill="#0f0f0c"/><circle cx="' + cx + '" cy="' + cy + '" r="3" fill="#c9a227"/>'; }
+    return g + '</svg>';
+  }
   const scoreHero = '<div class="hero-stat" style="flex-direction:column;align-items:stretch;gap:14px">'
-    + '<div style="display:flex;align-items:center;gap:20px">'
-    + '<div class="hero-number" style="color:' + (compC == null ? '#bbb' : scoreColor(compC)) + '">'
-      + (compI == null ? '' : '<span style="font-size:30px;color:#bbb">' + compI + ' → </span>') + (compC == null ? '—' : compC) + '<span style="font-size:22px;color:#aaa">/10</span></div>'
+    + '<div style="display:flex;align-items:center;gap:22px">'
+    + '<div style="flex:0 0 260px;text-align:center">' + gauge(compC, compI)
+      + '<div class="hero-number" style="margin-top:-4px;color:' + (compC == null ? '#bbb' : scoreColor(compC)) + '">' + (compC == null ? '—' : compC) + '<span style="font-size:22px;color:#aaa">/10</span></div></div>'
     + '<div class="hero-label"><strong>Your ' + cpShort + ' Score ' + (compI != null && compC != null ? delta(compI, compC) : '') + '</strong>'
-    + 'Same scoring system as your intake, so the numbers compare directly: from your Starting Score of '
-    + (compI == null ? '—' : compI) + ' to ' + (compC == null ? '—' : compC) + ' today.</div>'
+    + 'Same scoring system as your intake, so the numbers compare directly: from your Starting Score of <strong style="display:inline;font-size:13px">'
+    + (compI == null ? '—' : compI) + '</strong> to <strong style="display:inline;font-size:13px">' + (compC == null ? '—' : compC) + '</strong> today. '
+    + '<span style="color:#888">The grey mark on the dial is where you started.</span></div>'
     + '</div>'
     + '<div style="display:flex;gap:8px">' + pillarCards + '</div>'
     + '</div>';
@@ -6738,14 +6754,109 @@ function printCheckpointReport(clientId, cp) {
       + '<td style="padding:.55rem .75rem;text-align:center">' + stdCell + '</td>'
       + '</tr>';
   }).join('');
-  const perfSection = perfRows ? (
+  // Combine-style bars: 0–125% of the avatar standard, red / gold / green
+  // zones, dashed line = standard, hollow dot = intake, solid dot = today.
+  const pctOfStd = (k, v) => {
+    const mx = grad && grad.metrics && grad.metrics[k]; const x = num(v);
+    if (!mx || !mx.target || x === null || x <= 0) return null;
+    return k === 'row' ? mx.target / x : x / mx.target;
+  };
+  function combineBar(k, iv, cv) {
+    const W = 400, X = p => Math.max(0, Math.min(1.25, p)) / 1.25 * W;
+    const pI = pctOfStd(k, iv), pC = pctOfStd(k, cv);
+    const zone = p => p >= 1 ? '#1a7a4a' : p >= 0.6 ? '#c9a227' : '#dc2626';
+    let g = '<svg viewBox="-6 0 ' + (W + 12) + ' 44" width="100%" height="44" preserveAspectRatio="none" style="display:block;overflow:visible">'
+      + '<rect x="0" y="18" width="' + X(0.6) + '" height="10" rx="3" fill="#f6dada"/>'
+      + '<rect x="' + X(0.6) + '" y="18" width="' + (X(1) - X(0.6)) + '" height="10" fill="#f3e8c4"/>'
+      + '<rect x="' + X(1) + '" y="18" width="' + (W - X(1)) + '" height="10" rx="3" fill="#d3eadc"/>'
+      + '<line x1="' + X(1) + '" y1="10" x2="' + X(1) + '" y2="36" stroke="#0f0f0c" stroke-width="1.5" stroke-dasharray="3 2"/>';
+    if (pI !== null && pC !== null && Math.abs(X(pC) - X(pI)) > 10) {
+      const dir = X(pC) > X(pI) ? 1 : -1;
+      g += '<line x1="' + (X(pI) + 6 * dir) + '" y1="23" x2="' + (X(pC) - 9 * dir) + '" y2="23" stroke="#555" stroke-width="2"/>'
+        + '<path d="M' + (X(pC) - 9 * dir) + ' 19 L' + (X(pC) - 3 * dir) + ' 23 L' + (X(pC) - 9 * dir) + ' 27 Z" fill="#555"/>';
+    }
+    if (pI !== null) g += '<circle cx="' + X(pI) + '" cy="23" r="6" fill="#fff" stroke="#888" stroke-width="2"/>';
+    if (pC !== null) g += '<circle cx="' + X(pC) + '" cy="23" r="8" fill="' + zone(pC) + '" stroke="#fff" stroke-width="2"/>'
+      + '<text x="' + X(pC) + '" y="9" text-anchor="middle" font-family="Barlow Condensed,sans-serif" font-size="10" font-weight="700" fill="' + zone(pC) + '">' + Math.round(pC * 100) + '%</text>';
+    return g + '</svg>';
+  }
+  const perfCards = PERF.map(f => {
+    const iv = intake[f.key], cv = cur[f.key];
+    if (!iv && !cv) return '';
+    const mx = grad && grad.metrics && grad.metrics[f.key];
+    let status = '<span style="color:#bbb">—</span>';
+    if (mx && cv && !isNaN(mx.val)) {
+      if (mx.passed) status = '<span style="font-size:11px;font-weight:800;color:#1a7a4a">✓ STANDARD MET</span>';
+      else { const gap = f.lower ? Math.round(mx.val - mx.target) : Math.round(mx.target - mx.val);
+        status = '<span style="font-size:11px;font-weight:800;color:#c9a227">' + (f.lower ? gap + ' sec to cut' : gap + ' ' + f.unit + ' to go') + '</span>'; }
+    }
+    let lbl = f.label;
+    if (f.key === 'pushups' && intake.putype === 'Knee' && cur.putype === 'Full') lbl += ' <span style="font-size:9px;color:#1a7a4a;font-weight:800">KNEE → FULL</span>';
+    return '<div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid #f0ede4">'
+      + '<div style="flex:0 0 170px">'
+        + '<div style="font-size:12px;font-weight:700;color:#1a1a1a">' + lbl + '</div>'
+        + '<div style="font-size:12px;color:#555;margin-top:2px">' + (iv || '—') + ' → <strong style="color:#1a1a1a;font-size:15px">' + (cv || '—') + '</strong> <span style="font-size:9px;color:#aaa">' + f.unit + '</span></div>'
+        + '<div style="margin-top:1px">' + change(iv, cv, f.lower ? 'down' : 'up', f.key === 'row' || f.key === 'plank' ? 'sec' : '') + '</div>'
+      + '</div>'
+      + '<div style="flex:1;min-width:0">' + combineBar(f.key, iv, cv)
+        + '<div style="display:flex;justify-content:space-between;font-family:Barlow Condensed,sans-serif;font-size:8px;font-weight:700;letter-spacing:.1em;color:#aaa;margin-top:2px"><span>0%</span><span>STANDARD ' + (mx ? mx.target + ' ' + f.unit : '') + '</span><span>125%</span></div></div>'
+      + '<div style="flex:0 0 118px;text-align:right;white-space:nowrap">' + status + '</div>'
+      + '</div>';
+  }).join('');
+  const perfSection = perfCards ? (
     '<div class="section-title" style="display:flex;justify-content:space-between;align-items:baseline">'
     + '<span>PERFORMANCE — INTAKE → ' + cpShort.toUpperCase() + '</span>'
-    + '<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">vs YOUR ' + String(c.avatar||'').toUpperCase() + ' · ' + String(c.level||'').toUpperCase() + ' STANDARD</span></div>'
-    + '<table><thead><tr><th>Movement</th>' + thCols + '<th>Standard</th></tr></thead><tbody>' + perfRows + '</tbody></table>'
+    + '<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">% OF YOUR ' + String(c.avatar||'').toUpperCase() + ' · ' + String(c.level||'').toUpperCase() + ' STANDARD</span></div>'
+    + '<div style="margin-bottom:6px">' + perfCards + '</div>'
+    + '<div style="font-size:10px;color:#888;margin-bottom:26px">○ Intake &nbsp;●&nbsp;' + cpShort + ' &nbsp;┆ Standard &nbsp;· &nbsp;<span style="color:#dc2626">red</span> under 60% · <span style="color:#c9a227">gold</span> 60–99% · <span style="color:#1a7a4a">green</span> standard met</div>'
   ) : '';
 
-  // ── AVATAR STANDARD — verdict + rings + path to next level ──
+  // ── ATHLETIC PROFILE — radar: tests as % of standard, pillars as /10 ──
+  const axes = [
+    {k:'kbdl', label:'KB DEADLIFT', i:pctOfStd('kbdl', intake.kbdl), c:pctOfStd('kbdl', cur.kbdl)},
+    {k:'pushups', label:'PUSH-UPS', i:pctOfStd('pushups', intake.pushups), c:pctOfStd('pushups', cur.pushups)},
+    {k:'plank', label:'PLANK', i:pctOfStd('plank', intake.plank), c:pctOfStd('plank', cur.plank)},
+    {k:'row', label:'500M ROW', i:pctOfStd('row', intake.row), c:pctOfStd('row', cur.row)},
+    {k:'struct', label:'STRUCTURE', i:pssI.structScore != null ? pssI.structScore / 10 : null, c:pssC.structScore != null ? pssC.structScore / 10 : null},
+    {k:'cardio', label:'CARDIO', i:pssI.cardioScore != null ? pssI.cardioScore / 10 : null, c:pssC.cardioScore != null ? pssC.cardioScore / 10 : null},
+  ].filter(a => a.c !== null);
+  let profileSection = '';
+  if (axes.length >= 3) {
+    const cx = 206, cy = 150, R = 100, N = axes.length, MAXV = 1.25;
+    const P = (idx, v) => { const t = -Math.PI / 2 + idx * 2 * Math.PI / N, rr = R * Math.max(0, Math.min(MAXV, v || 0)) / MAXV; return [cx + rr * Math.cos(t), cy + rr * Math.sin(t)]; };
+    const poly = (vals, attrs) => '<polygon points="' + vals.map((v, idx) => P(idx, v).map(n => n.toFixed(1)).join(',')).join(' ') + '" ' + attrs + '/>';
+    let g = '<svg viewBox="0 0 412 300" width="380" height="277" style="display:block;overflow:visible">';
+    const labels = [];
+    [0.25, 0.5, 0.75, 1.25].forEach(v => { g += poly(axes.map(() => v), 'fill="none" stroke="#e8e5db" stroke-width="1"'); });
+    g += poly(axes.map(() => 1), 'fill="none" stroke="#c9a227" stroke-width="1.5" stroke-dasharray="4 3"');
+    axes.forEach((a, idx) => { const e = P(idx, MAXV); g += '<line x1="' + cx + '" y1="' + cy + '" x2="' + e[0].toFixed(1) + '" y2="' + e[1].toFixed(1) + '" stroke="#e8e5db"/>';
+      const t = -Math.PI / 2 + idx * 2 * Math.PI / N, lr = R + 26, lx = cx + lr * Math.cos(t), ly = cy + lr * Math.sin(t);
+      const anchor = Math.abs(Math.cos(t)) < 0.3 ? 'middle' : Math.cos(t) > 0 ? 'start' : 'end';
+      labels.push('<text x="' + lx.toFixed(1) + '" y="' + (ly + 3).toFixed(1) + '" text-anchor="' + anchor + '" font-family="Barlow Condensed,sans-serif" font-size="10" font-weight="700" letter-spacing=".08em" fill="#333" stroke="#fff" stroke-width="3" paint-order="stroke">' + a.label + ' <tspan fill="#c9a227">' + (a.k === 'struct' || a.k === 'cardio' ? Math.round(a.c * 100) / 10 + '/10' : Math.round(a.c * 100) + '%') + '</tspan></text>'); });
+    if (axes.every(a => a.i !== null)) g += poly(axes.map(a => a.i), 'fill="none" stroke="#999" stroke-width="1.5" stroke-dasharray="3 3"');
+    g += poly(axes.map(a => a.c), 'fill="rgba(201,162,39,.28)" stroke="#c9a227" stroke-width="2.5" stroke-linejoin="round"');
+    axes.forEach((a, idx) => { const d = P(idx, a.c); g += '<circle cx="' + d[0].toFixed(1) + '" cy="' + d[1].toFixed(1) + '" r="3.5" fill="#c9a227" stroke="#fff" stroke-width="1.5"/>'; });
+    g += labels.join('') + '</svg>';
+    // Scouting summary: biggest gain, standards met, consistency
+    let best = null;
+    PERF.forEach(f => { const a = num(intake[f.key]), b = num(cur[f.key]); if (a && b) { const p = (f.lower ? (a - b) : (b - a)) / a * 100; if (p > 0 && (!best || p > best.p)) best = {f, p, a, b}; } });
+    const metN = grad && grad.metrics ? ['kbdl','pushups','plank','row'].filter(k => cur[k] && grad.metrics[k].passed).length : 0;
+    const cd0 = computeComplianceDetail(c);
+    const stat = (big, small, col) => '<div style="padding:10px 0;border-bottom:1px solid #e8e5db"><div style="font-family:Bebas Neue,sans-serif;font-size:30px;line-height:1;color:' + (col || '#1a1a1a') + '">' + big + '</div><div style="font-size:11px;color:#666;margin-top:2px">' + small + '</div></div>';
+    profileSection = '<div class="section-title" style="display:flex;justify-content:space-between;align-items:baseline">'
+      + '<span>ATHLETIC PROFILE</span>'
+      + '<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">INTAKE vs ' + cpShort.toUpperCase() + ' · DASHED RING = YOUR STANDARD</span></div>'
+      + '<div style="display:flex;align-items:center;gap:20px;margin-bottom:26px">'
+      + '<div style="flex:0 0 380px">' + g
+        + '<div style="font-size:10px;color:#888;text-align:center;margin-top:-4px"><span style="color:#999">┄ Intake</span> &nbsp; <span style="color:#c9a227;font-weight:800">■ ' + cpShort + '</span> &nbsp; <span style="color:#c9a227">┆ Standard</span></div></div>'
+      + '<div style="flex:1">'
+        + (best ? stat('+' + best.p.toFixed(0) + '%', '<strong>' + best.f.label + '</strong> — biggest gain (' + best.a + ' → ' + best.b + ' ' + best.f.unit + ')', '#c9a227') : '')
+        + stat(metN + ' / 4', 'avatar standards met', metN === 4 ? '#1a7a4a' : '#1a1a1a')
+        + (cd0 ? stat(cd0.pct + '%', 'training consistency · ' + cd0.done + ' of ' + cd0.scheduled + ' sessions', cd0.pct >= 80 ? '#1a7a4a' : cd0.pct >= 60 ? '#c9a227' : '#dc2626') : '')
+      + '</div></div>';
+  }
+
+  // ── AVATAR STANDARD — verdict + path to next level (bars above show each test) ──
   // Same standards (MRS_STANDARDS / MRS_PROGRESSION) and visuals as the
   // Intake Report, using the checkpoint numbers.
   const _std = (MRS_STANDARDS[c.avatar] && MRS_STANDARDS[c.avatar][c.level]) || null;
@@ -6772,28 +6883,6 @@ function printCheckpointReport(clientId, cp) {
       : '<div style="padding:12px 16px;background:#c9a22714;border:1px solid #c9a22755;border-radius:10px;margin-bottom:16px;font-size:13px;color:#1a1a1a"><strong style="color:#c9a227">' + met.length + ' of ' + keys.length + ' standards met.</strong> '
         + (togo.length ? 'Still to go: ' + togo.join(' · ') + '.' : '') + (tested.length < keys.length ? ' ' + (keys.length - tested.length) + ' not tested this checkpoint.' : '')
         + (nextName ? ' Meet all four to move up to <strong>' + nextName + '</strong>.' : '') + '</div>';
-    const puLabel = _std.puForm === 'full' ? 'full only' : 'knee ok';
-    const ringData = [
-      {key:'kbdl',   label:'KB DEADLIFT', color:'#c9a227', t:_std.kbdl,    l:_std.kbdl + ' reps',                    inv:false},
-      {key:'pushups',label:'PUSH-UPS',    color:'#1a7a4a', t:_std.pushups, l:_std.pushups + ' (' + puLabel + ')',    inv:false},
-      {key:'plank',  label:'PLANK HOLD',  color:'#3b82f6', t:_std.plank,   l:_std.plank + ' sec',                    inv:false},
-      {key:'row',    label:'500M ROW',    color:'#a855f7', t:_std.row,     l:_std.row + ' sec',                      inv:true },
-    ];
-    const ring = rd => {
-      const v = num(cur[rd.key]) || 0, iv = num(intake[rd.key]);
-      const raw = rd.inv ? (v > 0 && rd.t > 0 ? rd.t / v : 0) : (rd.t > 0 ? v / rd.t : 0);
-      const fill = Math.min(Math.max(raw, 0), 1);
-      const r = 42, circ = 2 * Math.PI * r, dash = (fill * circ).toFixed(1), gap = (circ - parseFloat(dash)).toFixed(1);
-      return '<div style="display:flex;flex-direction:column;align-items:center;gap:8px">'
-        + '<svg width="100" height="100" viewBox="0 0 100 100">'
-        + '<circle cx="50" cy="50" r="' + r + '" fill="none" stroke="#e8e5db" stroke-width="9"/>'
-        + '<circle cx="50" cy="50" r="' + r + '" fill="none" stroke="' + rd.color + '" stroke-width="9" stroke-dasharray="' + dash + ' ' + gap + '" stroke-dashoffset="' + (circ * 0.25).toFixed(1) + '" stroke-linecap="round" transform="rotate(-90 50 50)"/>'
-        + '<text x="50" y="46" text-anchor="middle" font-family="Bebas Neue,sans-serif" font-size="20" fill="#1a1a1a">' + Math.round(fill * 100) + '%</text>'
-        + '<text x="50" y="60" text-anchor="middle" font-family="Barlow,sans-serif" font-size="9" fill="#888">' + (v || '—') + (iv !== null ? ' (was ' + iv + ')' : '') + '</text>'
-        + '</svg>'
-        + '<div style="text-align:center"><div style="font-family:Bebas Neue,sans-serif;font-size:11px;letter-spacing:.08em;color:#1a1a1a">' + rd.label + '</div>'
-        + '<div style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.1em;color:#888">TARGET ' + rd.l.toUpperCase() + '</div></div></div>';
-    };
     // Avatar progression track (same logic as the Intake / Progress reports)
     const track = [];
     let av = c.avatar, lv = c.level || 'Beginner';
@@ -6826,7 +6915,6 @@ function printCheckpointReport(clientId, cp) {
       + '<span>YOUR ' + String(c.avatar).toUpperCase() + ' ' + String(c.level || '').toUpperCase() + ' STANDARD</span>'
       + '<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">PATH TO NEXT LEVEL</span></div>'
       + verdict
-      + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">' + ringData.map(ring).join('') + '</div>'
       + '<div style="margin-bottom:24px;padding:14px 16px;background:#f8f7f3;border-radius:10px;border:1px solid #e8e5db"><div style="display:flex;align-items:flex-start">' + dots + '</div></div>';
   }
 
@@ -6850,6 +6938,17 @@ function printCheckpointReport(clientId, cp) {
     return b<=fit ? {label:'Fitness / Athletic', color:'#1a7a4a'} : b<=ok ? {label:'Acceptable', color:'#c9a227'} : {label:'Above Range', color:'#dc2626'};
   }
   const tag = cls => cls ? ' <span style="padding:2px 7px;background:' + cls.color + '22;border-radius:5px;font-size:9px;font-weight:700;color:' + cls.color + '">' + cls.label + '</span>' : '';
+  // Mini dumbbell: intake dot at centre, today's dot moved by % change (±5% = edge).
+  function trend(from, to, dir) {
+    const a = num(from), b = num(to);
+    if (a === null || b === null || a === 0) return '';
+    const p = (b - a) / a * 100, steady = Math.abs(p) < 1;
+    const col = steady || dir === 'none' ? '#999' : ((dir === 'down') === (p < 0)) ? '#1a7a4a' : '#dc2626';
+    const x2 = 45 + Math.max(-1, Math.min(1, p / 5)) * 38;
+    return '<svg viewBox="0 0 90 18" width="90" height="18"><line x1="7" y1="9" x2="83" y2="9" stroke="#eee" stroke-width="2"/>'
+      + '<line x1="45" y1="9" x2="' + x2.toFixed(1) + '" y2="9" stroke="' + col + '" stroke-width="3"/>'
+      + '<circle cx="45" cy="9" r="4" fill="#fff" stroke="#999" stroke-width="1.5"/><circle cx="' + x2.toFixed(1) + '" cy="9" r="5" fill="' + col + '"/></svg>';
+  }
   const bodyRows = BODY.map(f => {
     const iv = intake[f.k], mv = mid && mid[f.k], cv = cur[f.k];
     if (!iv && !cv) return '';
@@ -6857,13 +6956,14 @@ function printCheckpointReport(clientId, cp) {
     return '<tr style="border-bottom:1px solid #f0ede4">'
       + '<td style="padding:.55rem .75rem;font-size:12px;color:#555;font-weight:500">' + f.label + tag(cls) + '</td>'
       + cell(iv, f.u) + (mid ? cell(mv, f.u) : '') + cell(cv, f.u, true)
-      + '<td style="padding:.55rem .75rem;text-align:center">' + change(iv, cv, f.dir, f.du || f.u) + '</td></tr>';
+      + '<td style="padding:.55rem .75rem;text-align:center">' + change(iv, cv, f.dir, f.du || f.u) + '</td>'
+      + '<td style="padding:.55rem .25rem;text-align:center">' + trend(iv, cv, f.dir) + '</td></tr>';
   }).join('');
   const bodySection = bodyRows ? (
     '<div class="section-title" style="display:flex;justify-content:space-between;align-items:baseline">'
     + '<span>BODY COMPOSITION — INTAKE → ' + cpShort.toUpperCase() + '</span>'
     + '<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">WHO · ACSM RANGES</span></div>'
-    + '<table><thead><tr><th>Measure</th>' + thCols + '</tr></thead><tbody>' + bodyRows + '</tbody></table>'
+    + '<table><thead><tr><th>Measure</th>' + thCols + '<th>Trend</th></tr></thead><tbody>' + bodyRows + '</tbody></table>'
   ) : '';
 
   // ── CARDIOVASCULAR — intake → checkpoint ──
@@ -6898,7 +6998,15 @@ function printCheckpointReport(clientId, cp) {
     + '<div style="font-size:11px;color:#888">Program weeks 1–' + cd.weeksCounted + ' · ' + cd.freq + 'x/week'
       + (cd.inProgressWeek ? ' · week ' + cd.inProgressWeek + ' in progress (' + cd.inProgressDone + ' of ' + cd.freq + ' so far), counted once finished' : '') + '</div>'
     + '<div style="font-size:11px;color:#888">Workout details (weights, reps or notes) logged on ' + cd.logged + ' of ' + cd.done + ' sessions</div>'
-    + '<div style="width:200px;height:6px;background:#f0ede4;border-radius:3px;overflow:hidden;margin-top:6px"><div style="width:' + cd.pct + '%;height:100%;background:' + (cd.pct>=80?'#1a7a4a':cd.pct>=60?'#c9a227':'#dc2626') + '"></div></div>'
+    + '</div>'
+    + '<div style="margin-left:auto;display:flex;flex-direction:column;gap:5px">'
+    + (cd.weeks || []).map(w => '<div style="display:flex;align-items:center;gap:6px"><span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.1em;color:#888;width:34px">WK ' + w.week + '</span>'
+        + Array.from({length: cd.freq}, (_, k) => k < w.done
+            ? '<span style="width:14px;height:14px;border-radius:50%;background:#1a7a4a;display:inline-block"></span>'
+            : w.inProgress ? '<span style="width:14px;height:14px;border-radius:50%;border:2px dashed #ccc;display:inline-block;box-sizing:border-box"></span>'
+            : '<span style="width:14px;height:14px;border-radius:50%;border:2px solid #dc2626;display:inline-block;box-sizing:border-box"></span>').join('')
+        + (w.inProgress ? '<span style="font-size:9px;color:#aaa">in progress</span>' : '') + '</div>').join('')
+    + '<div style="font-size:9px;color:#aaa;margin-top:2px"><span style="color:#1a7a4a">●</span> done &nbsp;<span style="color:#dc2626">○</span> missed</div>'
     + '</div></div>'
   ) : '';
 
@@ -6957,6 +7065,7 @@ function printCheckpointReport(clientId, cp) {
     + '</div></div>'
     + '<div style="font-size:13px;color:#555;line-height:1.6;margin-bottom:24px">' + intro + '</div>'
     + scoreHero
+    + profileSection
     + perfSection
     + standardSection
     + bodySection
