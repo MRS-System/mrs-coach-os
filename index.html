@@ -6667,7 +6667,8 @@ function printCheckpointReport(clientId, cp) {
     let col = '#888';
     if (!steady && dir !== 'none') col = ((dir === 'down') === (p < 0)) ? '#1a7a4a' : '#dc2626';
     const diff = b - a;
-    const shown = isBP ? Math.round(diff) : Math.abs(diff) < 1 ? +diff.toFixed(3) : diff.toFixed(1);
+    const shown = isBP ? Math.round(diff) : Math.abs(diff) < 1 ? +diff.toFixed(3)
+      : (Number.isInteger(a) && Number.isInteger(b)) ? diff : diff.toFixed(1);
     const diffTxt = (diff > 0 ? '+' : '') + shown + (isBP ? ' sys' : unit ? ' ' + unit : '');
     return '<span style="font-weight:800;color:' + col + '">' + (steady ? 'Steady' : diffTxt) + '</span>'
       + '<div style="font-size:9px;color:#aaa">' + (p > 0 ? '+' : '') + p.toFixed(1) + '%</div>';
@@ -6743,6 +6744,91 @@ function printCheckpointReport(clientId, cp) {
     + '<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">vs YOUR ' + String(c.avatar||'').toUpperCase() + ' · ' + String(c.level||'').toUpperCase() + ' STANDARD</span></div>'
     + '<table><thead><tr><th>Movement</th>' + thCols + '<th>Standard</th></tr></thead><tbody>' + perfRows + '</tbody></table>'
   ) : '';
+
+  // ── AVATAR STANDARD — verdict + rings + path to next level ──
+  // Same standards (MRS_STANDARDS / MRS_PROGRESSION) and visuals as the
+  // Intake Report, using the checkpoint numbers.
+  const _std = (MRS_STANDARDS[c.avatar] && MRS_STANDARDS[c.avatar][c.level]) || null;
+  let standardSection = '';
+  if (_std && grad && grad.metrics) {
+    const names = {kbdl:'KB Deadlift', pushups:'Push-Ups', plank:'Plank Hold', row:'500m Row'};
+    const units = {kbdl:'reps', pushups:'reps', plank:'sec', row:'sec'};
+    const keys = ['kbdl','pushups','plank','row'];
+    const tested = keys.filter(k => cur[k]);
+    const met = tested.filter(k => grad.metrics[k].passed);
+    const togo = tested.filter(k => !grad.metrics[k].passed).map(k => {
+      const mx = grad.metrics[k];
+      if (k === 'pushups' && mx.formRequired === 'full' && !/full/i.test(cur.putype || '')) return names[k] + ' (full push-ups required)';
+      const gap = k === 'row' ? Math.round(mx.val - mx.target) : Math.round(mx.target - mx.val);
+      return names[k] + ' (' + gap + ' ' + units[k] + (k === 'row' ? ' to cut' : ' to go') + ')';
+    });
+    const prog = MRS_PROGRESSION[c.avatar] && MRS_PROGRESSION[c.avatar][c.level];
+    const nextName = !prog ? null : prog.next === 'complete' ? 'Elite Maintenance'
+      : prog.next === 'options' ? (prog.options || []).join(' or ') + (prog.nextLevel ? ' ' + prog.nextLevel : '')
+      : prog.next + ' ' + (prog.nextLevel || '');
+    const allMet = grad.passed && tested.length === keys.length;
+    const verdict = allMet
+      ? '<div style="padding:12px 16px;background:#1a7a4a14;border:1px solid #1a7a4a55;border-radius:10px;margin-bottom:16px;font-size:13px;color:#1a1a1a"><strong style="color:#1a7a4a">✓ All 4 standards met.</strong> ' + (nextName ? 'Ready to move up to <strong>' + nextName + '</strong>.' : '') + '</div>'
+      : '<div style="padding:12px 16px;background:#c9a22714;border:1px solid #c9a22755;border-radius:10px;margin-bottom:16px;font-size:13px;color:#1a1a1a"><strong style="color:#c9a227">' + met.length + ' of ' + keys.length + ' standards met.</strong> '
+        + (togo.length ? 'Still to go: ' + togo.join(' · ') + '.' : '') + (tested.length < keys.length ? ' ' + (keys.length - tested.length) + ' not tested this checkpoint.' : '')
+        + (nextName ? ' Meet all four to move up to <strong>' + nextName + '</strong>.' : '') + '</div>';
+    const puLabel = _std.puForm === 'full' ? 'full only' : 'knee ok';
+    const ringData = [
+      {key:'kbdl',   label:'KB DEADLIFT', color:'#c9a227', t:_std.kbdl,    l:_std.kbdl + ' reps',                    inv:false},
+      {key:'pushups',label:'PUSH-UPS',    color:'#1a7a4a', t:_std.pushups, l:_std.pushups + ' (' + puLabel + ')',    inv:false},
+      {key:'plank',  label:'PLANK HOLD',  color:'#3b82f6', t:_std.plank,   l:_std.plank + ' sec',                    inv:false},
+      {key:'row',    label:'500M ROW',    color:'#a855f7', t:_std.row,     l:_std.row + ' sec',                      inv:true },
+    ];
+    const ring = rd => {
+      const v = num(cur[rd.key]) || 0, iv = num(intake[rd.key]);
+      const raw = rd.inv ? (v > 0 && rd.t > 0 ? rd.t / v : 0) : (rd.t > 0 ? v / rd.t : 0);
+      const fill = Math.min(Math.max(raw, 0), 1);
+      const r = 42, circ = 2 * Math.PI * r, dash = (fill * circ).toFixed(1), gap = (circ - parseFloat(dash)).toFixed(1);
+      return '<div style="display:flex;flex-direction:column;align-items:center;gap:8px">'
+        + '<svg width="100" height="100" viewBox="0 0 100 100">'
+        + '<circle cx="50" cy="50" r="' + r + '" fill="none" stroke="#e8e5db" stroke-width="9"/>'
+        + '<circle cx="50" cy="50" r="' + r + '" fill="none" stroke="' + rd.color + '" stroke-width="9" stroke-dasharray="' + dash + ' ' + gap + '" stroke-dashoffset="' + (circ * 0.25).toFixed(1) + '" stroke-linecap="round" transform="rotate(-90 50 50)"/>'
+        + '<text x="50" y="46" text-anchor="middle" font-family="Bebas Neue,sans-serif" font-size="20" fill="#1a1a1a">' + Math.round(fill * 100) + '%</text>'
+        + '<text x="50" y="60" text-anchor="middle" font-family="Barlow,sans-serif" font-size="9" fill="#888">' + (v || '—') + (iv !== null ? ' (was ' + iv + ')' : '') + '</text>'
+        + '</svg>'
+        + '<div style="text-align:center"><div style="font-family:Bebas Neue,sans-serif;font-size:11px;letter-spacing:.08em;color:#1a1a1a">' + rd.label + '</div>'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.1em;color:#888">TARGET ' + rd.l.toUpperCase() + '</div></div></div>';
+    };
+    // Avatar progression track (same logic as the Intake / Progress reports)
+    const track = [];
+    let av = c.avatar, lv = c.level || 'Beginner';
+    const levels = ['Beginner','Intermediate','Advanced'];
+    track.push({avatar:av, level:lv, current:true});
+    for (let steps = 0; steps < 12; steps++) {
+      const pr = MRS_PROGRESSION[av] && MRS_PROGRESSION[av][lv];
+      if (!pr) break;
+      if (pr.next === 'complete') { track.push({avatar:'Elite Maintenance', level:'', current:false}); break; }
+      if (pr.next === 'options') { (pr.options || []).forEach(opt => track.push({avatar:opt, level:pr.nextLevel || 'Beginner', current:false, fork:true})); break; }
+      const nextAv = pr.next, nextLv = pr.nextLevel || 'Beginner';
+      if (nextAv === av && levels.indexOf(nextLv) <= levels.indexOf(lv)) break;
+      track.push({avatar:nextAv, level:nextLv, current:false});
+      av = nextAv; lv = nextLv;
+      if (nextAv !== c.avatar) break;
+    }
+    const dots = track.map((st, i) => {
+      const dotColor = st.current ? '#c9a227' : st.fork ? '#a855f7' : '#ddd';
+      const nameColor = st.current ? '#1a1a1a' : st.fork ? '#a855f7' : '#bbb';
+      return '<div style="display:flex;flex-direction:column;align-items:center;flex:1;position:relative">'
+        + (i < track.length - 1 ? '<div style="position:absolute;top:6px;left:50%;right:-50%;height:2px;background:#e8e5db;z-index:0"></div>' : '')
+        + '<div style="width:14px;height:14px;border-radius:50%;background:' + dotColor + ';position:relative;z-index:1' + (st.current ? ';box-shadow:0 0 0 3px #fff,0 0 0 5px #c9a227' : '') + '"></div>'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:' + (st.current ? '700' : '400') + ';letter-spacing:.06em;text-transform:uppercase;color:' + nameColor + ';margin-top:5px;text-align:center;line-height:1.3">' + (st.level ? st.avatar + ' ' + st.level : st.avatar) + '</div>'
+        + (st.current ? '<div style="font-size:8px;font-weight:700;color:#c9a227;margin-top:2px">YOU ARE HERE</div>' : '')
+        + ((!st.current && i === 1 && !st.fork) ? '<div style="font-size:8px;color:#888;margin-top:2px">NEXT</div>' : '')
+        + (st.fork ? '<div style="font-size:8px;color:#a855f7;margin-top:2px">OPTION</div>' : '')
+        + '</div>';
+    }).join('');
+    standardSection = '<div class="section-title" style="display:flex;justify-content:space-between;align-items:baseline">'
+      + '<span>YOUR ' + String(c.avatar).toUpperCase() + ' ' + String(c.level || '').toUpperCase() + ' STANDARD</span>'
+      + '<span style="font-family:Barlow Condensed,sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;color:#888">PATH TO NEXT LEVEL</span></div>'
+      + verdict
+      + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">' + ringData.map(ring).join('') + '</div>'
+      + '<div style="margin-bottom:24px;padding:14px 16px;background:#f8f7f3;border-radius:10px;border:1px solid #e8e5db"><div style="display:flex;align-items:flex-start">' + dots + '</div></div>';
+  }
 
   // ── BODY COMPOSITION — intake → checkpoint ──
   const BODY = [
@@ -6872,6 +6958,7 @@ function printCheckpointReport(clientId, cp) {
     + '<div style="font-size:13px;color:#555;line-height:1.6;margin-bottom:24px">' + intro + '</div>'
     + scoreHero
     + perfSection
+    + standardSection
     + bodySection
     + cardioSection
     + '<div class="legend"><span style="color:#1a7a4a;font-weight:800">Green</span> = moving the right way for your goal · <span style="color:#dc2626;font-weight:800">Red</span> = the wrong way · <span style="color:#888;font-weight:800">Steady / grey</span> = under 1% change, or no target direction</div>'
