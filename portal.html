@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=60 -->
+<!-- portal cache-buster v=61 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -4385,14 +4385,19 @@ function selfTestEsc(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, function(x){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]; });
 }
 
+// The Day 1 baseline can be recorded any day in the first week (Days 1–7), so
+// late joiners and anyone who missed Days 1–2 still get a starting line.
+// The record keeps its real date, so the report can show when it was taken.
+var BASELINE_LAST_DAY = 7;
+
 // 'day1' | 'day28' | 'result' | null
 function selfTestDue() {
   var info = readChallengeInfo();
   if (!info || !info.challenge || !info.challenge.startDate) return null;
   var d = challengeDayOf(info.challenge.startDate), total = info.challenge.days || 28, st = readSelfTests();
   if (d >= total) return st.challenge_selftest_day28 ? 'result' : (_selfTestLater ? null : 'day28');
-  // Baseline asks on EVERY open during Days 1–2 until done; "Later" hides it only until the next open.
-  if ((d === 1 || d === 2) && !st.challenge_selftest_day1 && !_selfTestLater) return 'day1';
+  // Baseline asks on EVERY open during Days 1–7 until done; "Later" hides it only until the next open.
+  if (d >= 1 && d <= BASELINE_LAST_DAY && !st.challenge_selftest_day1 && !_selfTestLater) return 'day1';
   return null;
 }
 
@@ -4617,8 +4622,9 @@ function renderChallengeProgress(el) {
   var proto = d1 && d1.timeOfDay ? '<div style="font-size:11.5px;color:var(--dim2);margin-top:8px">Measured in the ' + selfTestEsc(d1.timeOfDay) + (d1.fasted === 'yes' ? ', fasted' : d1.fasted === 'no' ? ', not fasted' : '') + '.</div>' : '';
   var baseBody;
   if (d1) baseBody = selfTestRowsHtml(d1, null) + proto;
-  else if (d !== null && d >= 1 && d <= 2) baseBody = '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6">Not recorded yet. Five quick numbers — they’re what you’ll beat on Day 28.</div>' + btn('Record my baseline', "openSelfTestSheet('day1')");
-  else if (d !== null && d > 2) baseBody = '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6">No baseline was recorded. Your Day 28 numbers will be your starting line.</div>';
+  else if (d !== null && d >= 1 && d <= BASELINE_LAST_DAY) baseBody = '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6">Not recorded yet. Five quick numbers — they’re what you’ll beat on Day 28.'
+      + (d > 2 ? ' Do it today — it can be recorded until Day ' + BASELINE_LAST_DAY + ' (' + ymd(BASELINE_LAST_DAY - 1) + ').' : '') + '</div>' + btn('Record my baseline', "openSelfTestSheet('day1')");
+  else if (d !== null && d > BASELINE_LAST_DAY) baseBody = '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6">No baseline was recorded. Your Day 28 numbers will be your starting line.</div>';
   else baseBody = '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6">Opens on Day 1' + (ch.startDate ? ' (' + ymd(0) + ')' : '') + '.</div>';
   html += card('📏 Your Baseline · Day 1', baseBody);
 
