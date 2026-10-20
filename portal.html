@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=62 -->
+<!-- portal cache-buster v=63 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2811,6 +2811,30 @@ init();
 
 
 // ── Profile Code Loading ──────────────────────────────
+// The program the portal is showing: the active one if it exists, else the
+// latest (the same rule renderProgram uses).
+function shownProgramId(profile) {
+  var ps = (profile && profile.programs) || [];
+  if (!ps.length) return null;
+  var a = ps.find(function(p){ return p.id === profile.activeProgramId; });
+  return (a || ps[ps.length - 1]).id;
+}
+// A different program is now shown → start it with fresh session ticks.
+// Session ids (prog-wN-sM) don't include the program, so without this Week 1 of
+// a new program showed the old program's "✓ Logged". The old ticks are kept in
+// an archive on the phone; the coach already received them, and the coach's
+// day-by-day merge never drops a session it has.
+function startNewProgramIfSwitched(pdb, prevShown) {
+  var now = shownProgramId(pdb.clientProfile);
+  if (!prevShown || !now || prevShown === now) return false;
+  pdb.slotChecksArchive = pdb.slotChecksArchive || {};
+  if (pdb.slotChecks && Object.keys(pdb.slotChecks).length) pdb.slotChecksArchive[prevShown] = pdb.slotChecks;
+  pdb.slotChecks = {};
+  pdb.programSwitchedAt = Date.now();
+  setTimeout(function(){ try { showToast('New program from your coach 💪 Week 1 starts fresh.'); } catch(e){} }, 900);
+  return true;
+}
+
 function loadProfileFromCode() {
   var code = (document.getElementById('profileCodeInput') ? document.getElementById('profileCodeInput').value : '').trim();
   if (!code) { showToast('Paste your profile code first'); return; }
@@ -2821,6 +2845,7 @@ function loadProfileFromCode() {
     var pdb = portalDb();
     var existing = pdb.clientProfile;
     if (existing && existing.id === profileData.id && existing.programs && existing.programs.some(function(p){return p.block1;})) {
+      var _prevShown = shownProgramId(existing);
       pdb.clientProfile = Object.assign({}, existing, {
         name:profileData.name, avatar:profileData.avatar, freq:profileData.freq,
         goal:profileData.goal, level:profileData.level, flags:profileData.flags,
@@ -2829,7 +2854,16 @@ function loadProfileFromCode() {
         // merge kept the client's OLD measurements and dropped a Week-4 update.
         measurements:profileData.measurements||existing.measurements,
         programs:profileData.programs&&profileData.programs.some(function(p){return p.block1;})?profileData.programs:existing.programs,
+        // v=63: the coach's choice of ACTIVE program (and cohort/challenge info)
+        // now travels too. Before, only the program list did, so a client kept
+        // seeing their old program after the coach built and pushed a new one.
+        activeProgramId: profileData.activeProgramId || existing.activeProgramId || null,
+        cohort: profileData.cohort != null ? profileData.cohort : existing.cohort,
+        clientType: profileData.clientType || existing.clientType,
+        challenge: profileData.challenge || existing.challenge,
+        profileVersion: profileData.profileVersion || existing.profileVersion || null,
       });
+      startNewProgramIfSwitched(pdb, _prevShown);
     } else { pdb.clientProfile = profileData; }
     if (profileData.nrKey) pdb.nrKey = profileData.nrKey;
     savePortalDb(pdb);
@@ -4379,10 +4413,19 @@ window.addEventListener('load', renderBarcodeDayLog);
 // One-tap share link (?p=<id>): fetch the stored profile from the Worker and
 // load it through the SAME routine the manual paste flow uses (no duplicated
 // load logic). On any failure, fall back to the manual paste box.
+// v=63: an iPhone Home Screen app is often resumed from memory for days without
+// reloading, so the profile was only re-checked on a full restart. Re-check when
+// the app comes back to the foreground (at most every 3 minutes).
+var _lastProfileFetch = 0;
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'visible' && Date.now() - _lastProfileFetch > 180000) { try { loadSharedProfile(); } catch (e) {} }
+});
+
 function loadSharedProfile() {
   var id = new URLSearchParams(window.location.search).get('p');
   if (!id) return;
-  fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile?id=' + encodeURIComponent(id))
+  _lastProfileFetch = Date.now();
+  fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile?id=' + encodeURIComponent(id), { cache: 'no-store' })
     .then(function(res){ if (!res.ok) throw new Error('not found'); return res.text(); })
     .then(function(jsonText){
       JSON.parse(jsonText); // validate before handing to the paste routine

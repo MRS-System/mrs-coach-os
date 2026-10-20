@@ -2177,6 +2177,7 @@ function saveMeasurements() {
   if (whr) record.whr = whr;
   c.measurements[measureCheckpoint] = record;
   saveDb(data);
+  schedulePortalPush(c.id);
   closeMeasure();
   toast(CP_LABELS[measureCheckpoint] + ' saved ✓');
   renderProfile(measureClientId);
@@ -4697,6 +4698,7 @@ function autosaveProgram() {
   if (!c.programs) c.programs = [];
   const targetId = genEditingProgramId || genAutoProgId;
   let p = targetId ? c.programs.find(x => x.id === targetId) : null;
+  const created = !p;
   if (!p) {
     p = {
       id: 'p_' + Date.now(),
@@ -4712,8 +4714,14 @@ function autosaveProgram() {
   p.block2 = genT2;
   p.block1Only = !genT2;
   p.partial = (genFailedBlock !== 0);
-  c.activeProgramId = p.id;
+  // A newly built program becomes the active one. Re-saving or finishing an
+  // OLDER program (e.g. its weeks 5–8) no longer silently switches the client
+  // back to it — that's how a client ended up on an old program after a new one
+  // was built. Set Active stays the explicit way to switch.
+  const activeExists = (c.programs || []).some(x => x.id === c.activeProgramId);
+  if (created || !activeExists || c.activeProgramId === p.id) c.activeProgramId = p.id;
   saveDb(data);
+  if (!p.partial) schedulePortalPush(c.id);
   return p;
 }
 
@@ -4776,6 +4784,7 @@ function deleteProgram(progId, clientId) {
   if (!confirm(`Delete "${prog.title}"? This cannot be undone.`)) return;
   c.programs = c.programs.filter(x => x.id !== progId);
   saveDb(data);
+  schedulePortalPush(clientId);
   toast('Program deleted ✓');
   renderProfile(clientId);
 }
@@ -4842,7 +4851,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=62';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=63';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -4870,6 +4879,45 @@ function buildPortalProfile(c) {
 // (measurements + program) via PUT. The portal re-fetches on every load, so the
 // client sees it on their next open. Coach-controlled explicit reveal — never an
 // auto-push on save.
+// ── Automatic portal updates (v=63) ──────────────────────────────────
+// Every save that changes what the client should see (a program built/finished,
+// Set Active, a program deleted, measurements, profile edits) now updates the
+// client's EXISTING personal link in place, a moment after the save. No more
+// relying on a separate Update Portal tap. Clients without a personal link yet
+// are skipped (they get one from Send link / Export Client).
+var _portalPushTimers = {};
+async function pushPortalProfile(clientId) {
+  var c = (db().clients || []).find(function(x){ return x.id === clientId; });
+  if (!c || !c.portalBlobId) return 'nolink';
+  var body = isChallengeClient(c) ? buildChallengePortalProfile(c) : buildPortalProfile(c);
+  body.profileVersion = Date.now();
+  try {
+    var res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile?id=' + encodeURIComponent(c.portalBlobId), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error('status ' + res.status);
+    var d = db(), cc = (d.clients || []).find(function(x){ return x.id === clientId; });
+    if (cc) { cc.portalPushedAt = Date.now(); cc.portalPushedProgramId = c.activeProgramId || null; cc.portalPushFailed = false; saveDb(d); }
+    return 'pushed';
+  } catch (e) {
+    var d2 = db(), c2 = (d2.clients || []).find(function(x){ return x.id === clientId; });
+    if (c2) { c2.portalPushFailed = true; saveDb(d2); }
+    return 'failed';
+  }
+}
+function schedulePortalPush(clientId) {
+  if (!clientId) return;
+  clearTimeout(_portalPushTimers[clientId]);
+  _portalPushTimers[clientId] = setTimeout(function () {
+    delete _portalPushTimers[clientId];
+    pushPortalProfile(clientId).then(function (r) {
+      var c = (db().clients || []).find(function(x){ return x.id === clientId; });
+      var nm = (c && c.name) || 'client';
+      if (r === 'pushed') toast('Portal updated for ' + nm + ' ✓');
+      else if (r === 'failed') toast('⚠ Couldn\u2019t update ' + nm + '\u2019s portal — tap 📲 Update Portal to retry.');
+    });
+  }, 1500);
+}
+
 async function updatePortal(clientId) {
   var c = (db().clients || []).find(function(x){ return x.id === clientId; });
   if (!c) return;
@@ -4935,7 +4983,7 @@ function exportClient(clientId) {
   // Build the KV-backed one-tap (?p=) link, then point BOTH Text and Email at
   // it so tapping either auto-loads the program with no manual paste. The two
   // buttons stay disabled (dimmed, pointer-events:none) until this resolves.
-  (isChallengeClient(c) && c.portalBlobId ? pushChallengeProfile(c).then(function(r){ if (r !== 'pushed') throw new Error('push ' + r); return challengePortalUrl(c.portalBlobId); }) : createShareLink(profileJson)).then(function(link){ // linked participant: reuse + refresh the SAME link
+  (c.portalBlobId ? pushPortalProfile(c.id).then(function(r){ if (r !== 'pushed') throw new Error('push ' + r); return challengePortalUrl(c.portalBlobId); }) : createShareLink(profileJson)).then(function(link){ // linked participant: reuse + refresh the SAME link
     // Piece 2: remember this client's KV blob id so "Update Portal" can overwrite
     // it in place later (link is ...?p=<id>&v=NN).
     try {
@@ -5027,7 +5075,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=62',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=63',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5771,6 +5819,7 @@ function saveEditClient(clientId) {
 
   saveDb(data);
   document.getElementById('measureModal').classList.remove('active');
+  schedulePortalPush(clientId);
   toast('Profile updated ✓');
   renderProfile(clientId);
 }
@@ -5781,6 +5830,7 @@ function setActiveProgram(progId, clientId) {
   if (!c) return;
   c.activeProgramId = progId;
   saveDb(data);
+  schedulePortalPush(clientId);
   toast('Active program set ✓');
   renderProfile(clientId);
 }
@@ -7779,7 +7829,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=62';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=63';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
