@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=61 -->
+<!-- portal cache-buster v=62 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -3957,6 +3957,9 @@ function detectUnsentWeeks() {
 // Real sender for a prior week: builds that week's payload (correct weekKey),
 // POSTs it, and on success records pdb.sentWeeks[weekKey]. Returns true/false.
 async function sendWeekForOffset(offset) {
+  return withSendLock(function () { return _sendWeekForOffsetNow(offset); });
+}
+async function _sendWeekForOffsetNow(offset) {
   if (!clientId) return false;
   const wk = weekKey(offset);
   const pdb = portalDb();
@@ -3967,11 +3970,13 @@ async function sendWeekForOffset(offset) {
     // Safety: a prior week must travel under ITS OWN weekKey, never the current
     // one — otherwise it would overwrite the current week's coach entry.
     if (payload.weekKey !== wk) return false;
+    payload.deviceId = syncDeviceId();
     const res = await fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/inbox', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientId: payload.clientId, payload })
     });
     if (!res.ok) return false;
+    markWeekSynced(payload);
     if (offset < 0) { // only flag completed (prior) weeks as definitively sent
       const fresh = portalDb();
       if (!fresh.sentWeeks) fresh.sentWeeks = {};
@@ -4081,9 +4086,113 @@ function deliverCurrentWeek() {
   _syncTimer = setTimeout(async () => {
     _syncTimer = null;
     if (!_weekHasContent(buildWeeklyPayload(0))) { renderSyncStatus('idle'); return; }
-    const ok = await sendWeekForOffset(0);
-    renderSyncStatus(ok ? 'synced' : 'failed');
+    await syncPass(true);
   }, 900);
+}
+
+// ── Reliable delivery (v=62) ──────────────────────────────────────────
+// Ticks saved by the PROTECTED writers (saveCheckItem, saveWorkoutLog,
+// autoSaveWellness) can't call a sender, so a watcher notices changes instead:
+// every few seconds while the app is open it fingerprints this week (and last
+// week), and sends whichever changed since its last CONFIRMED send. Sends go one
+// at a time (the server mailbox drops one of two near-simultaneous writes), a
+// failed send retries with backoff and on reconnect, and a week that hasn't
+// been re-confirmed for 12h is re-sent once as insurance. Each send carries a
+// per-device id so the coach can tell two devices apart.
+var SYNC_STATE_KEY = 'mrs_sync_state_v1';
+var SYNC_REFRESH_MS = 12 * 3600 * 1000;
+var _sendChain = Promise.resolve();
+var _syncPassBusy = false, _syncRetryAt = 0, _syncRetryN = 0;
+
+function withSendLock(fn) {
+  var p = _sendChain.then(fn, fn);
+  _sendChain = p.then(function(){}, function(){});
+  return p;
+}
+function syncState() {
+  var s = null;
+  try { s = JSON.parse(localStorage.getItem(SYNC_STATE_KEY) || 'null'); } catch (e) {}
+  if (!s || typeof s !== 'object') s = {};
+  if (!s.sig) s.sig = {};
+  if (!s.ok) s.ok = {};
+  return s;
+}
+function saveSyncState(s) { try { localStorage.setItem(SYNC_STATE_KEY, JSON.stringify(s)); } catch (e) {} }
+function syncDeviceId() {
+  var s = syncState();
+  if (!s.device) { s.device = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); saveSyncState(s); }
+  return s.device;
+}
+// Fingerprint of a week's content (send time and photo bytes left out, so a
+// re-render doesn't look like a change; a new or removed photo still does).
+function payloadSig(p) {
+  var str = JSON.stringify(p, function (k, v) {
+    if (k === 'generatedAt' || k === 'deviceId' || k === 'slim') return undefined;
+    if (k === 'thumb' && typeof v === 'string') return v.length;
+    return v;
+  });
+  var h = 5381;
+  for (var i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0;
+  return h.toString(36) + ':' + str.length;
+}
+function slimPayload(p) {
+  var c = JSON.parse(JSON.stringify(p));
+  var strip = function (meals) { (meals || []).forEach(function (m) { if (m && m.thumb) m.thumb = null; }); };
+  Object.keys(c.checkins || {}).forEach(function (k) { if (c.checkins[k] && c.checkins[k].meals) strip(c.checkins[k].meals); });
+  Object.keys(c.mealScans || {}).forEach(function (k) { strip(c.mealScans[k]); });
+  c.slim = true;
+  return c;
+}
+function markWeekSynced(payload) {
+  var s = syncState();
+  s.sig[payload.weekKey] = payloadSig(payload);
+  s.ok[payload.weekKey] = Date.now();
+  // keep the last ~6 weeks of state
+  var keys = Object.keys(s.ok).sort();
+  keys.slice(0, Math.max(0, keys.length - 6)).forEach(function (k) { delete s.ok[k]; delete s.sig[k]; });
+  s.lastSent = Date.now();
+  saveSyncState(s);
+}
+async function _postWeekNow(payload) {
+  try {
+    payload.deviceId = syncDeviceId();
+    var res = await fetch(INBOX_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId: payload.clientId, payload: payload }) });
+    if (!res.ok) return false;
+    markWeekSynced(payload);
+    return true;
+  } catch (e) { return false; }
+}
+// One pass: this week, then last week. force = ignore the retry back-off.
+async function syncPass(force) {
+  if (!client || !clientId || _syncPassBusy) return;
+  if (!force && Date.now() < _syncRetryAt) return;
+  _syncPassBusy = true;
+  try {
+    for (var off = 0; off >= -1; off--) {
+      var p = buildWeeklyPayload(off);
+      if (!p || !p.clientId || p.weekKey !== weekKey(off) || !_weekHasContent(p)) { if (off === 0) renderSyncStatus('idle'); continue; }
+      var st = syncState(), changed = st.sig[p.weekKey] !== payloadSig(p);
+      var stale = Date.now() - (st.ok[p.weekKey] || 0) > SYNC_REFRESH_MS;
+      if (!changed && !stale) { if (off === 0 && force) renderSyncStatus('synced'); continue; }
+      if (off === 0 && changed) renderSyncStatus('syncing');
+      var ok = await withSendLock(function () { return _postWeekNow(p); });
+      if (!ok) {
+        _syncRetryN++;
+        _syncRetryAt = Date.now() + Math.min(60000, 5000 * Math.pow(2, _syncRetryN - 1));
+        if (off === 0) renderSyncStatus('failed');
+        break;
+      }
+      _syncRetryN = 0; _syncRetryAt = 0;
+      if (off === 0) renderSyncStatus('synced');
+    }
+  } finally { _syncPassBusy = false; }
+}
+function startSyncWatcher() {
+  if (window._syncWatcher) return;
+  window._syncWatcher = setInterval(function () { if (document.visibilityState === 'visible') syncPass(false); }, 4000);
+  window.addEventListener('online', function () { syncPass(true); });
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') syncPass(true); });
 }
 
 // Best-effort flush when the app is backgrounded/closed — the only way to catch
@@ -4095,9 +4204,16 @@ function flushCurrentWeekBeacon() {
     const payload = buildWeeklyPayload(0);
     if (!payload.clientId || !_weekHasContent(payload)) return;
     if (_syncTimer) { clearTimeout(_syncTimer); _syncTimer = null; }
-    const body = JSON.stringify({ clientId: payload.clientId, payload });
+    // Nothing new since the last confirmed send → don't spend a send.
+    if (syncState().sig[payload.weekKey] === payloadSig(payload)) return;
+    // Background sends are capped at 64KB by the browser, so they travel WITHOUT
+    // meal photos (slim:true). The next foreground pass re-sends the full week,
+    // because the slim send never counts as confirmed.
+    const slim = slimPayload(payload);
+    slim.deviceId = syncDeviceId();
+    const body = JSON.stringify({ clientId: slim.clientId, payload: slim });
     if (navigator.sendBeacon) {
-      navigator.sendBeacon(INBOX_URL, new Blob([body], { type: 'application/json' }));
+      navigator.sendBeacon(INBOX_URL, new Blob([body], { type: 'text/plain;charset=UTF-8' }));
     } else {
       fetch(INBOX_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true });
     }
@@ -4235,6 +4351,13 @@ window.addEventListener('load', renderUnloggedPastSessionNudge);
 // Weekly auto-send + hard-gate on open — recovers any stranded/skipped prior
 // week (sends under its correct weekKey), gates forward use if a send can't
 // complete. Same post-init load hook pattern as above.
+// init() (protected) runs twice: at parse time and again on 'load'. The second
+// run resets clientId from the URL's ?client=, which personal ?p= links don't
+// have, so clientId was null exactly when the open-time sends ran below and they
+// silently did nothing (weeks only reached the coach when a Program-tab workout
+// triggered its own later send). Restore it from the loaded profile first.
+function restoreClientIdAfterInit() { if (client && client.id && !clientId) clientId = client.id; }
+window.addEventListener('load', restoreClientIdAfterInit);
 window.addEventListener('load', autoSendUnsentWeeks);
 // Live current-week delivery (Fix #2): flush the in-progress week when the app is
 // backgrounded/closed — the only hook that catches the protected writers
@@ -4246,6 +4369,7 @@ window.addEventListener('load', function () {
   });
   window.addEventListener('pagehide', flushCurrentWeekBeacon);
   deliverCurrentWeek();
+  startSyncWatcher();
 });
 // Barcode day-log overlay (packaged-food lane). Runs AFTER init's renderNRDailyLog
 // (registered later = fires later), overlaying the unified list when the day has
