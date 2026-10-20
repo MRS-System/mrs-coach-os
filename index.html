@@ -858,24 +858,41 @@ function mergeClientWeek(data) {
   }
   const c = database.clients[clientIdx];
   if (!c.weeklyData) c.weeklyData = [];
-  // Remove existing entry for this week if present (idempotent per week)
+  // v=62: MERGE instead of replace. A week can now arrive many times and from
+  // more than one device (iPhone Safari and the Home Screen app keep separate
+  // data). Every copy is folded in day by day — nothing an earlier copy carried
+  // is thrown away — and the score is recomputed from the merged days with the
+  // same /35 rules the portal uses (recomputeWeekRecord; identical on real data).
+  const prev = c.weeklyData.find(w => w.weekKey === data.weekKey) || null;
+  const merged = mergeWeekCopies(prev, data);
+  const freqFallback = c.freq === '2x/week' ? 2 : c.freq === '4x/week' ? 4 : 3;
+  const inBreak = data.scoreBreakdown || {};
+  const sb = recomputeWeekRecord({ weekKey: data.weekKey, checkins: merged.checkins, slotLogs: merged.slotLogs,
+    scoreBreakdown: Object.assign({}, (prev && prev.scoreBreakdown) || {}, inBreak) }, freqFallback);
+  const devices = Object.assign({}, (prev && prev.devices) || {});
+  const dev = data.deviceId || 'legacy';
+  const sentAt = data.generatedAt || null;
+  if (!devices[dev] || !devices[dev].sentAt || (sentAt && sentAt > devices[dev].sentAt)) devices[dev] = { sentAt: sentAt, receivedAt: new Date().toISOString() };
+  const newer = !prev || !prev.sentAt || (sentAt && sentAt >= prev.sentAt);
   c.weeklyData = c.weeklyData.filter(w => w.weekKey !== data.weekKey);
   c.weeklyData.push({
     weekKey: data.weekKey,
     uploadedAt: new Date().toISOString(),
+    sentAt: newer ? sentAt : prev.sentAt,                 // when the client's phone sent it
+    devices: devices,                                      // one entry per device that sent this week
     seen: false,
-    weekScore: data.weekScore || 0,
-    scoreBreakdown: data.scoreBreakdown || {},
-    streak: data.streak || 0,
-    personalBest: data.personalBest || 0,
-    checkins: data.checkins || {},
-    nutritionScore: data.nutritionScore || null,
-    workoutLogs: data.workoutLogs || [],
-    slotLogs: data.slotLogs || {},
-    mealScans: data.mealScans || {},
-    barcodeScans: data.barcodeScans || {}, // Fix #5: carry packaged-food (barcode) items to the coach
-    avgNutriScore: data.avgNutriScore || null,
-    retestDone: data.retestDone || {}, // client "completed my reassessment" signal (informational; measurements stay authoritative)
+    weekScore: sb.total,
+    scoreBreakdown: Object.assign({}, sb, { nutritionScore: inBreak.nutritionScore != null ? inBreak.nutritionScore : sb.nutritionScore }),
+    streak: newer ? (data.streak || 0) : (prev.streak || 0),
+    personalBest: Math.max(data.personalBest || 0, (prev && prev.personalBest) || 0),
+    checkins: merged.checkins,
+    nutritionScore: data.nutritionScore || (prev && prev.nutritionScore) || null,
+    workoutLogs: merged.workoutLogs,
+    slotLogs: merged.slotLogs,
+    mealScans: merged.mealScans,
+    barcodeScans: merged.barcodeScans, // Fix #5: carry packaged-food (barcode) items to the coach
+    avgNutriScore: merged.avgNutriScore,
+    retestDone: Object.assign({}, (prev && prev.retestDone) || {}, data.retestDone || {}), // client "completed my reassessment" signal
   });
   c.lastSeen = Date.now();
   database.clients[clientIdx] = c;
@@ -884,10 +901,73 @@ function mergeClientWeek(data) {
     success: true,
     clientName: c.name,
     weekKey: data.weekKey,
-    score: data.weekScore || 0,
-    workoutCount: (data.workoutLogs || []).length,
+    score: sb.total,
+    workoutCount: merged.workoutLogs.length,
     streak: data.streak || 0,
   };
+}
+
+// Fold a newly arrived copy of a week into the stored one. Per day, the copy
+// whose day was saved later (ts) leads and the other fills any field it lacks;
+// meals and barcode items are unioned by timestamp and keep any photo either
+// copy had (a slim background send carries none); workout logs and program
+// session logs are unioned (newest entry per slot wins). No copy can erase a
+// day or session another copy delivered.
+function mergeWeekCopies(prev, data) {
+  const P = prev || {};
+  const mealUnion = (a, b) => {
+    const by = {};
+    [].concat(a || [], b || []).forEach(m => {
+      if (!m) return;
+      const k = m.ts != null ? 't' + m.ts : JSON.stringify(m);
+      const cur = by[k];
+      if (!cur) by[k] = Object.assign({}, m);
+      else if (!cur.thumb && m.thumb) cur.thumb = m.thumb;
+    });
+    return Object.values(by).sort((x, y) => (x.ts || 0) - (y.ts || 0));
+  };
+  const checkins = {};
+  const days = new Set(Object.keys(P.checkins || {}).concat(Object.keys(data.checkins || {})));
+  days.forEach(d => {
+    const a = (P.checkins || {})[d], b = (data.checkins || {})[d];
+    if (!a && !b) { checkins[d] = null; return; }
+    if (!a || !b) { checkins[d] = Object.assign({}, a || b); }
+    else {
+      const lead = (b.ts || 0) >= (a.ts || 0) ? b : a, other = lead === b ? a : b;
+      const out = Object.assign({}, other, lead);
+      Object.keys(other).forEach(k => { if (out[k] == null && other[k] != null) out[k] = other[k]; });
+      if (a.meals || b.meals) out.meals = mealUnion(a.meals, b.meals);
+      if (a.barcodeItems || b.barcodeItems) out.barcodeItems = mealUnion(a.barcodeItems, b.barcodeItems);
+      checkins[d] = out;
+    }
+  });
+  const dayMap = (x, y) => {
+    const out = {};
+    new Set(Object.keys(x || {}).concat(Object.keys(y || {}))).forEach(d => { out[d] = mealUnion((x || {})[d], (y || {})[d]); });
+    return out;
+  };
+  const slotLogs = {};
+  new Set(Object.keys(P.slotLogs || {}).concat(Object.keys(data.slotLogs || {}))).forEach(sid => {
+    const a = (P.slotLogs || {})[sid] || {}, b = (data.slotLogs || {})[sid] || {};
+    const out = {};
+    new Set(Object.keys(a).concat(Object.keys(b))).forEach(k => {
+      if (k === '_sessionDone') { out[k] = !!(a[k] || b[k]); return; }
+      if (k === '_doneAt') { out[k] = Math.max(a[k] || 0, b[k] || 0) || undefined; return; }
+      const x = a[k], y = b[k];
+      out[k] = !x ? y : !y ? x : ((y.ts || 0) >= (x.ts || 0) ? y : x);
+    });
+    if (!out._sessionDone) delete out._sessionDone;
+    if (!out._doneAt) delete out._doneAt;
+    slotLogs[sid] = out;
+  });
+  const wl = {};
+  [].concat(P.workoutLogs || [], data.workoutLogs || []).forEach(l => { if (l) wl[[l.date, l.week, l.session].join('|')] = l; });
+  const mealScans = dayMap(P.mealScans, data.mealScans);
+  const barcodeScans = dayMap(P.barcodeScans, data.barcodeScans);
+  const scored = Object.values(mealScans).reduce((acc, ms) => acc.concat(ms), []).filter(m => typeof m.score === 'number');
+  const avgNutriScore = scored.length ? Math.round(scored.reduce((t, m) => t + m.score, 0) / scored.length)
+    : (data.avgNutriScore || P.avgNutriScore || null);
+  return { checkins, slotLogs, workoutLogs: Object.values(wl), mealScans, barcodeScans, avgNutriScore };
 }
 
 // Sweep every client's cloud mailbox: GET /inbox?clientId= returns queued
@@ -5099,7 +5179,9 @@ function buildCheckinsPanel(c) {
   const rows = weeks.map(w => {
     const rowId = 'ci-' + c.id + '-' + w.weekKey;
     const unread = w.seen === false;
-    const sessions = (w.workoutLogs || []).length;
+    // Sessions from BOTH tabs: the score's workout count (Today-tab toggle or
+    // Program-tab session logs, whichever is higher), not Today-tab logs only.
+    const sessions = (w.scoreBreakdown && w.scoreBreakdown.workouts != null) ? w.scoreBreakdown.workouts : (w.workoutLogs || []).length;
     const freq = w.scoreBreakdown && w.scoreBreakdown.freq ? w.scoreBreakdown.freq : '';
     const recv = w.uploadedAt ? new Date(w.uploadedAt).toLocaleDateString('en-US', {month:'short', day:'numeric'}) : '—';
 
@@ -5114,7 +5196,9 @@ function buildCheckinsPanel(c) {
     const barcodeHtml = renderCoachBarcodeHistory(w.barcodeScans || {}, rowId); // Fix #5
 
     const sb = w.scoreBreakdown || {};
-    const chips = [['P',sb.protein],['W',sb.water],['Wk',sb.workoutScore],['E',sb.energyScore],['Sl',sb.sleepScore],['St',sb.stressScore],['N',sb.nutritionScore]]
+    // The five scored legs (each out of 7) + nutrition when scanned. Energy and
+    // stress no longer score, and the old 'sleepScore' field no longer exists.
+    const chips = [['Sleep',sb.sleep],['Protein',sb.eat != null ? sb.eat : sb.protein],['Water',sb.water],['Steps',sb.walk],['Workouts',sb.workoutScore],['Nutrition',sb.nutritionScore || null]]
       .filter(x => x[1] != null)
       .map(x => `<span style="font-size:10px;color:var(--dim-2);background:var(--black-4);border-radius:4px;padding:2px 6px;margin-right:4px">${x[0]} ${x[1]}</span>`).join('');
 
@@ -5134,7 +5218,7 @@ function buildCheckinsPanel(c) {
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span style="font-weight:700;font-size:13px;color:var(--white)">${programWeekLabel(c, w.weekKey)}</span>
             <span style="font-family:Bebas Neue,sans-serif;font-size:16px;color:var(--gold);letter-spacing:.04em">${w.weekScore || 0}<span style="font-size:10px;color:var(--dim)">/35</span></span>
-            <span style="font-size:11px;color:var(--dim-2)">${sessions}${freq ? '/' + freq : ''} session${sessions !== 1 ? 's' : ''}</span>
+            <span style="font-size:11px;color:var(--dim-2)">${freq ? Math.min(sessions, freq) + '/' + freq : sessions} session${(freq ? Math.min(sessions, freq) : sessions) !== 1 ? 's' : ''}${freq && sessions > freq ? ' <span style="color:var(--dim)">(+' + (sessions - freq) + ' extra)</span>' : ''}</span>
           </div>
           <div style="font-size:10px;color:var(--dim);margin-top:2px">Received ${recv} · 🔥 ${w.streak || 0} wk streak</div>
         </div>
