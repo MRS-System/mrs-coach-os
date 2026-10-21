@@ -1436,7 +1436,7 @@ function renderDashboard() {
   clients.forEach(c => {
     const prog = (c.programs||[]).find(p => p.id === c.activeProgramId);
     if (!prog) { noProgram++; return; }
-    const days = (now - prog.date) / (1000*60*60*24);
+    const days = (now - (clientStartMs(c) || prog.date)) / (1000*60*60*24);
     if (prog.block2 && days > 50) completed++;
     else if (days > 26 || prog.block2) inWks58++;
     else inWks14++;
@@ -1506,7 +1506,7 @@ function renderDashboard() {
     if (c.status === 'inactive') return false;
     const prog = (c.programs||[]).find(p => p.id === c.activeProgramId);
     if (!prog) return false;
-    const start = prog.date || c.createdAt;
+    const start = clientStartMs(c);
     if (!start) return false;
     const daysSince = (Date.now() - start) / (1000*60*60*24);
     return daysSince >= 26 && !c.measurements?.week4;
@@ -1517,7 +1517,7 @@ function renderDashboard() {
     if (c.status === 'inactive') return false;
     const prog = (c.programs||[]).find(p => p.id === c.activeProgramId);
     if (!prog) return false;
-    const start = prog.date || c.createdAt;
+    const start = clientStartMs(c);
     if (!start) return false;
     const daysSince = (Date.now() - start) / (1000*60*60*24);
     return daysSince >= 54 && !c.measurements?.week8;
@@ -1589,7 +1589,7 @@ function renderDashboard() {
 
     // 2. Gone quiet — the one the dashboard never surfaced at all.
     const ws = (c.weeklyData || []).map(w => parseWk(w.weekKey)).filter(Boolean).sort((a,b) => b - a);
-    const startAt = isChallengeClient(c) ? challengeStartMs(c) : (() => { const pr = (c.programs||[]).find(p => p.id === c.activeProgramId); return (pr && pr.date) || c.createdAt; })();
+    const startAt = isChallengeClient(c) ? challengeStartMs(c) : clientStartMs(c);
     if (ws.length) {
       const silent = Math.floor((Date.now() - ws[0]) / DAY);
       const sinceKey = ws[0].toISOString().slice(0,10);
@@ -1878,6 +1878,7 @@ function renderProfile(clientId) {
         </div>
       </div>
       <div class="btn-row">
+        ${startDayButton(c)}
         <button class="btn sm" onclick="editClient('${c.id}')">Edit</button>
         <button class="btn sm" style="background:rgba(201,162,39,.12);color:var(--gold);border-color:rgba(201,162,39,.3)" onclick="printIntakeReport('${c.id}')">🎯 Intake Report</button>
         ${c.measurements?.intake && c.measurements?.week4 ? `<button class="btn sm green" onclick="printCheckpointReport('${c.id}','week4')">📈 Week 4 Report</button>` : ''}
@@ -4851,13 +4852,16 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=63';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=64';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
 // (createShareLink) and the Update Portal overwrite, so the pushed shape always
 // matches the original share (measurements + full program text included).
 function buildPortalProfile(c) {
+  // v=64: with a Start Day set, the active program is sent dated to Week 1's
+  // Sunday so the portal's week counter (protected renderProgram) matches the coach's.
+  const day1 = ymdToMs(activeStartDay(c)) ? clientWeek1SundayMs(c) : null;
   return {
     id: c.id, name: c.name, age: c.age||"", gender: c.gender||"M",
     avatar: c.avatar||"", level: c.level||"Beginner", freq: c.freq||"3x/week",
@@ -4865,13 +4869,14 @@ function buildPortalProfile(c) {
     clientType: c.clientType||"1on1", createdAt: c.createdAt,
     intake: c.intake||{}, measurements: c.measurements||[],
     programs: (c.programs||[]).map(function(p){ return {
-      id:p.id, date:p.date, title:p.title||"", avatar:p.avatar||"",
+      id:p.id, date:(p.id === c.activeProgramId && day1) || p.date, title:p.title||"", avatar:p.avatar||"",
       level:p.level||"", freq:p.freq||"", goal:p.goal||"", flags:p.flags||[],
       block1:p.block1||"", block2:p.block2||"", block1Only:p.block1Only||false
     }; }),
     activeProgramId: c.activeProgramId||null,
-    sessionNotes:[], weeklyData:[], status:"active",
-    nrKey: getNRKey()||""
+    // v=64: nrKey is no longer sent. The portal never used it (the Worker scans
+    // meals with its own secret), so it only leaked the coach's API key.
+    sessionNotes:[], weeklyData:[], status:"active"
   };
 }
 
@@ -5075,7 +5080,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=63',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=64',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5100,13 +5105,83 @@ function programWeekLabel(c, weekKey) {
     ? 'Week of ' + new Date(+dm[1], +dm[2]-1, +dm[3]).toLocaleDateString('en-US', {month:'short', day:'numeric'})
     : 'Week ' + (weekKey || '').replace('week-', '');
   const prog = (c.programs || []).find(p => p.id === c.activeProgramId);
-  if (!prog || !prog.date || !dm) return fallback;
+  if (!dm || (!prog && !isChallengeClient(c))) return fallback;
+  const week1 = clientWeek1SundayMs(c);
+  if (!week1) return fallback;
   const checkinSunday = new Date(+dm[1], +dm[2]-1, +dm[3]);
-  const ps = new Date(prog.date);
-  const progSunday = new Date(ps.getFullYear(), ps.getMonth(), ps.getDate() - ps.getDay());
-  const weekNum = Math.round((checkinSunday - progSunday) / (7*86400000)) + 1;
-  if (weekNum < 1 || weekNum > 8) return fallback;
-  return 'Week ' + weekNum + ' of 8';
+  const weekNum = Math.round((checkinSunday - week1) / (7*86400000)) + 1;
+  const total = clientBlockWeeks(c);
+  if (weekNum < 1 || weekNum > total) return fallback;
+  return 'Week ' + weekNum + ' of ' + total;
+}
+
+// ── Start Day (v=64) ─────────────────────────────────────────────────
+// Day 1 of the client's ACTIVE program, set with the Start Day button on the
+// profile (stored on the program, so a new program starts its own Week 1 when
+// the coach taps Start Day for it). Week 1 is the Sunday–Saturday score week
+// that holds it, and every week count — check-in labels, charts, Week 4/8
+// reminders, pipeline, compliance and the client's Program tab — counts from
+// there. Challenge participants use their block's Day 1. A program with no
+// Start Day keeps the old anchor (its build date).
+function ymdToMs(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd || '');
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2]-1, +m[3]);
+  return (d.getFullYear() === +m[1] && d.getMonth() === +m[2]-1 && d.getDate() === +m[3]) ? d.getTime() : null;
+}
+function activeStartDay(c) {
+  const prog = c && (c.programs || []).find(p => p.id === c.activeProgramId);
+  return (prog && prog.startDay) || null;
+}
+function clientStartMs(c) {
+  if (!c) return null;
+  if (isChallengeClient(c)) { const s = challengeStartMs(c); if (s) return s; }
+  const sd = ymdToMs(activeStartDay(c));
+  if (sd) return sd;
+  const prog = (c.programs || []).find(p => p.id === c.activeProgramId);
+  return (prog && prog.date) || c.createdAt || null;
+}
+function clientWeek1SundayMs(c) {
+  const s = clientStartMs(c);
+  if (!s) return null;
+  const d = new Date(s);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - d.getDay()).getTime();
+}
+// What the client's Program tab counts weeks from (the program date it is sent).
+function clientPortalStartMs(c) {
+  if (c && (ymdToMs(activeStartDay(c)) || (isChallengeClient(c) && challengeStartMs(c)))) return clientWeek1SundayMs(c);
+  const prog = c && (c.programs || []).find(p => p.id === c.activeProgramId);
+  return prog ? (prog.date || c.createdAt) : null;
+}
+function clientBlockWeeks(c) { return isChallengeClient(c) ? 4 : 8; }
+
+function setStartDay(clientId) {
+  const data = db();
+  const c = (data.clients || []).find(x => x.id === clientId);
+  if (!c) return;
+  if (isChallengeClient(c)) { toast('Challenge clients start on their block’s Day 1 — change it on the 28 Day Challenge screen.'); return; }
+  const n = new Date();
+  const today = n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0') + '-' + String(n.getDate()).padStart(2,'0');
+  const prog = (c.programs || []).find(p => p.id === c.activeProgramId);
+  if (!prog) { toast('Build ' + c.name + '\u2019s program first, then set its Start Day.'); return; }
+  const ans = prompt('Start Day for ' + c.name + '\u2019s current program (YYYY-MM-DD).\nWeek 1 is the Sunday–Saturday week this day falls in.', prog.startDay || today);
+  if (ans === null) return;
+  const v = ans.trim();
+  if (!ymdToMs(v)) { toast('Use the format YYYY-MM-DD, e.g. ' + today); return; }
+  prog.startDay = v;
+  saveDb(data);
+  schedulePortalPush(c.id);
+  toast('Start Day set: ' + new Date(ymdToMs(v)).toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'}) + ' ✓');
+  renderProfile(clientId);
+}
+function startDayButton(c) {
+  if (isChallengeClient(c)) return '';
+  if (!(c.programs || []).some(p => p.id === c.activeProgramId)) return '';
+  const sd = ymdToMs(activeStartDay(c));
+  if (!sd) return `<button class="btn sm gold" onclick="setStartDay('${c.id}')">▶ Start Day</button>`;
+  const wk = Math.floor((Date.now() - clientWeek1SundayMs(c)) / (7*86400000)) + 1;
+  const label = new Date(sd).toLocaleDateString('en-US', {month:'short', day:'numeric'});
+  return `<button class="btn sm" style="background:var(--gold-dim);color:var(--gold);border-color:rgba(201,162,39,.3)" title="Change Start Day" onclick="setStartDay('${c.id}')">📅 Day 1: ${label}${wk >= 1 ? ' · Wk ' + wk : ''}</button>`;
 }
 
 // Coach-side score->color, same thresholds the client history uses, mapped to
@@ -5375,7 +5450,7 @@ function computeComplianceDetail(c) {
   const gotIn = n => doneByWeek[n] ? Math.min(doneByWeek[n].size, freq) : 0;
   // Latest week: left out only while it's unfinished and still underway.
   const prog = (c.programs || []).find(p => p.id === c.activeProgramId);
-  const start = prog ? (prog.date || c.createdAt) : null;
+  const start = prog ? clientPortalStartMs(c) : null;
   const calendarWeek = start ? Math.floor((Date.now() - start) / (7 * 864e5)) + 1 : null;
   let lastWeek = reachedMax;
   const inProgress = reachedMax > 1 && gotIn(reachedMax) < freq && calendarWeek !== null && calendarWeek <= reachedMax;
@@ -5570,7 +5645,7 @@ function buildTrendsSection(c) {
   // falling back to a short date when it is outside the block.
   const wkLabel = w => {
     const full = programWeekLabel(c, w.weekKey);
-    const m = /^Week (\d+) of 8$/.exec(full);
+    const m = /^Week (\d+) of \d+$/.exec(full);
     return m ? 'W' + m[1] : full.replace('Week of ', '');
   };
   // A week with no score is NULL, never 0 — a zero used to draw a cliff to the
@@ -7256,7 +7331,7 @@ function renderAnalytics() {
   clients.forEach(c => {
     const prog = (c.programs||[]).find(p => p.id === c.activeProgramId);
     if (!prog) { noProgram++; return; }
-    const days = (now - prog.date)/(1000*60*60*24);
+    const days = (now - (clientStartMs(c) || prog.date))/(1000*60*60*24);
     if (prog.block2 && days > 50) completed++;
     else if (days > 26 || prog.block2) inWks58++;
     else inWks14++;
@@ -7829,7 +7904,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=63';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=64';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
