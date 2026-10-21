@@ -334,6 +334,7 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
 
       <!-- ══ DASHBOARD ══ -->
       <div class="screen active" id="screen-dashboard">
+        <div id="storageBanner"></div>
         <div class="stat-grid" id="statsGrid"></div>
         <div class="section-div">Recent Clients</div>
         <div class="client-grid" id="recentClients"></div>
@@ -730,9 +731,65 @@ function saveDb(data) {
     // cleared the mailbox server-side and lost the week. Surface it and rethrow.
     console.error('saveDb failed:', e);
     try { toast('⚠ SAVE FAILED — device storage full. Change NOT saved. Free space & retry.'); } catch(_) {}
+    try { _saveFailedAt = Date.now(); renderStorageBanner(); } catch(_) {}
     throw e;
   }
 }
+// v=71: phone storage meter. The Coach OS lives in this phone's storage, and
+// meal photos fill it (~1MB a month per client who scans daily). Instead of
+// guessing Safari's limit, measure real free space: fill throwaway keys until
+// the phone refuses, then delete them (synchronous, so no save can interleave).
+// At most every 6 hours; between probes, capacity = last used + free.
+var STORAGE_PROBE = '__mrs_storage_probe_', STORAGE_METER = 'mrs_storage_meter_v1', _saveFailedAt = 0;
+function storageUsedChars() {
+  var used = 0;
+  for (var i = 0; i < localStorage.length; i++) {
+    var k = localStorage.key(i);
+    if (k.indexOf(STORAGE_PROBE) === 0) continue;
+    used += k.length + (localStorage.getItem(k) || '').length;
+  }
+  return used;
+}
+function clearStorageProbes() {
+  for (var i = localStorage.length - 1; i >= 0; i--) { var k = localStorage.key(i); if (k && k.indexOf(STORAGE_PROBE) === 0) localStorage.removeItem(k); }
+}
+function probeStorageFree() {
+  var free = 0, n = 0, chunk = 262144, s = 'x'.repeat(chunk);
+  try {
+    while (chunk >= 4096 && free < 20e6) {
+      try { localStorage.setItem(STORAGE_PROBE + n, s); n++; free += chunk; }
+      catch (e) { chunk = chunk / 2; s = s.slice(0, chunk); }
+    }
+  } finally { clearStorageProbes(); }
+  return free;
+}
+function storageMeter() {
+  var used = storageUsedChars(), m = null;
+  try { m = JSON.parse(localStorage.getItem(STORAGE_METER) || 'null'); } catch (e) {}
+  if (!m || !m.cap || Date.now() - m.at > 6 * 3600000) {
+    m = { at: Date.now(), cap: used + probeStorageFree() };
+    try { localStorage.setItem(STORAGE_METER, JSON.stringify(m)); } catch (e) {}
+  }
+  return { used: used, cap: m.cap, pct: Math.min(100, Math.round(used / m.cap * 100)) };
+}
+function renderStorageBanner() {
+  var el = document.getElementById('storageBanner');
+  if (!el) return;
+  var m = storageMeter(), mb = function (n) { return (n / 1048576).toFixed(1); };
+  var level = _saveFailedAt || m.pct >= 85 ? 'red' : m.pct >= 70 ? 'amber' : 'ok';
+  var color = level === 'red' ? 'var(--red)' : level === 'amber' ? 'var(--gold)' : 'var(--dim)';
+  var msg = _saveFailedAt
+    ? '⚠ A SAVE FAILED — phone storage is full. Changes since then are NOT saved. Back up now and don\u2019t add photos until this is fixed.'
+    : level === 'red' ? '⚠ Phone storage ' + m.pct + '% full — new check-ins may stop saving soon. Meal photos take most of it. Back up now.'
+    : level === 'amber' ? 'Phone storage ' + m.pct + '% full — meal photos take most of it. Back up this week.'
+    : '📱 Phone storage: ' + m.pct + '% used (' + mb(m.used) + ' of ~' + mb(m.cap) + 'M)';
+  el.innerHTML = level === 'ok'
+    ? '<div style="font-size:11px;color:var(--dim);margin:0 0 10px">' + msg + '</div>'
+    : '<div style="border:1px solid ' + color + ';color:' + color + ';border-radius:10px;padding:10px 12px;margin:0 0 14px;font-size:13px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">'
+      + '<span>' + msg + '</span><button class="btn gold" onclick="exportData()">💾 Back Up Now</button></div>';
+}
+try { clearStorageProbes(); } catch (e) {}   // leftovers if a probe was ever cut short
+
 function getKey() {
   try { const k = localStorage.getItem(API_KEY); if(k) return k; } catch(e) {}
   const m = document.cookie.match(new RegExp('(?:^|; )' + API_KEY + '=([^;]*)'));
@@ -1451,6 +1508,7 @@ function avColor(a) { return AV_COLORS[a] || 'rgba(255,255,255,.05)'; }
 // DASHBOARD
 // ══════════════════════════════════════════════════════════════════
 function renderDashboard() {
+  try { renderStorageBanner(); } catch (e) {}
   const data = db();
   const clients = data.clients || [];
   const totalPrograms = clients.reduce((acc, c) => acc + (c.programs || []).length, 0);
@@ -4883,7 +4941,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=70';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=71';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -5111,7 +5169,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=70',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=71',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -7970,7 +8028,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=70';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=71';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
