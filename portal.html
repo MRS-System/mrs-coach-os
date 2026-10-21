@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=64 -->
+<!-- portal cache-buster v=65 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1959,6 +1959,44 @@ function portalDb() {
   catch(e){return{checkins:{},weekScores:{},streak:0,lastStreakWeek:null,sundaySkipped:null};}
 }
 function savePortalDb(d){ try{localStorage.setItem(CLIENT_DB_KEY,JSON.stringify(d));}catch(e){} }
+
+// v=65: profile text (name, avatar, program text…) is drawn with innerHTML in
+// several places, including protected renderProgram/parseSlots. Rather than edit
+// those, every profile is cleaned where it ENTERS the portal: '<' becomes '&lt;'
+// in every string, so no profile text can ever become an HTML tag or script.
+// It still displays as '<' wherever it is drawn as HTML. '>' is kept (program
+// markdown uses it). Runs before init() for the stored profile and any legacy
+// ?profile= link; loadSharedProfile cleans the Worker copy.
+function sanitizeProfileData(v) {
+  if (typeof v === 'string') return v.indexOf('<') < 0 ? v : v.replace(/</g, '&lt;');
+  if (Array.isArray(v)) return v.map(sanitizeProfileData);
+  if (v && typeof v === 'object') { var o = {}; Object.keys(v).forEach(function (k) { o[k] = sanitizeProfileData(v[k]); }); return o; }
+  return v;
+}
+(function sanitizeBeforeInit() {
+  try {
+    var pdb = portalDb();
+    if (pdb.clientProfile) {
+      var clean = sanitizeProfileData(pdb.clientProfile);
+      if (JSON.stringify(clean) !== JSON.stringify(pdb.clientProfile)) { pdb.clientProfile = clean; savePortalDb(pdb); }
+    }
+  } catch (e) {}
+  try {
+    var qs = new URLSearchParams(window.location.search), enc = qs.get('profile');
+    if (enc) {
+      var raw = decodeURIComponent(escape(atob(enc)));
+      var safe = JSON.stringify(sanitizeProfileData(JSON.parse(raw)));
+      if (safe !== raw) {
+        qs.set('profile', btoa(unescape(encodeURIComponent(safe))));
+        history.replaceState(null, '', window.location.pathname + '?' + qs.toString() + window.location.hash);
+      }
+    }
+  } catch (e) {
+    // Unreadable ?profile= — drop it rather than let init() parse it.
+    try { var q2 = new URLSearchParams(window.location.search); q2.delete('profile'); history.replaceState(null, '', window.location.pathname + (q2.toString() ? '?' + q2.toString() : '') + window.location.hash); } catch (_) {}
+  }
+})();
+
 function todayKey(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
 function weekKey(offset=0){const d=new Date();d.setDate(d.getDate()-d.getDay()+(offset*7));return`week-${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
 function getWeekDays(offset=0){
@@ -4428,7 +4466,7 @@ function loadSharedProfile() {
   fetch('https://mrs-nutrireader-worker.mrs-system.workers.dev/profile?id=' + encodeURIComponent(id), { cache: 'no-store' })
     .then(function(res){ if (!res.ok) throw new Error('not found'); return res.text(); })
     .then(function(jsonText){
-      JSON.parse(jsonText); // validate before handing to the paste routine
+      jsonText = JSON.stringify(sanitizeProfileData(JSON.parse(jsonText))); // validate + strip tags (v=65)
       var el = document.getElementById('profileCodeInput');
       if (!el) throw new Error('no input');
       el.value = btoa(unescape(encodeURIComponent(jsonText)));
