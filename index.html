@@ -874,13 +874,22 @@ function mergeClientWeek(data) {
   const sentAt = data.generatedAt || null;
   if (!devices[dev] || !devices[dev].sentAt || (sentAt && sentAt > devices[dev].sentAt)) devices[dev] = { sentAt: sentAt, receivedAt: new Date().toISOString() };
   const newer = !prev || !prev.sentAt || (sentAt && sentAt >= prev.sentAt);
+  // v=66: phones re-send a week often (on every change, every 12h, from each
+  // device). Only a copy that brings something NEW marks the week unread again;
+  // identical re-sends leave it read. "Received" stays the first arrival;
+  // updatedAt records when new data last came in.
+  const retestDone = Object.assign({}, (prev && prev.retestDone) || {}, data.retestDone || {});
+  const changed = !prev || weekFingerprint(prev) !== weekFingerprint({ checkins: merged.checkins, slotLogs: merged.slotLogs,
+    workoutLogs: merged.workoutLogs, mealScans: merged.mealScans, barcodeScans: merged.barcodeScans, retestDone: retestDone });
+  const nowIso = new Date().toISOString();
   c.weeklyData = c.weeklyData.filter(w => w.weekKey !== data.weekKey);
   c.weeklyData.push({
     weekKey: data.weekKey,
-    uploadedAt: new Date().toISOString(),
+    uploadedAt: (prev && prev.uploadedAt) || nowIso,       // first arrival
+    updatedAt: changed ? nowIso : ((prev && (prev.updatedAt || prev.uploadedAt)) || nowIso), // last time new data arrived
     sentAt: newer ? sentAt : prev.sentAt,                 // when the client's phone sent it
     devices: devices,                                      // one entry per device that sent this week
-    seen: false,
+    seen: changed ? false : prev.seen !== false,
     weekScore: sb.total,
     scoreBreakdown: Object.assign({}, sb, { nutritionScore: inBreak.nutritionScore != null ? inBreak.nutritionScore : sb.nutritionScore }),
     streak: newer ? (data.streak || 0) : (prev.streak || 0),
@@ -892,19 +901,37 @@ function mergeClientWeek(data) {
     mealScans: merged.mealScans,
     barcodeScans: merged.barcodeScans, // Fix #5: carry packaged-food (barcode) items to the coach
     avgNutriScore: merged.avgNutriScore,
-    retestDone: Object.assign({}, (prev && prev.retestDone) || {}, data.retestDone || {}), // client "completed my reassessment" signal
+    retestDone: retestDone, // client "completed my reassessment" signal
   });
   c.lastSeen = Date.now();
   database.clients[clientIdx] = c;
   saveDb(database);
   return {
     success: true,
+    changed: changed,
     clientName: c.name,
     weekKey: data.weekKey,
     score: sb.total,
     workoutCount: merged.workoutLogs.length,
     streak: data.streak || 0,
   };
+}
+
+// What the coach would see in a week: days, sessions, meals, retest signal.
+// Key order and photo thumbnails are ignored, so an identical re-send (or one
+// that only adds/drops a photo) fingerprints the same as what's stored.
+function weekFingerprint(w) {
+  const norm = v => {
+    if (Array.isArray(v)) return v.map(norm);
+    if (v && typeof v === 'object') {
+      const o = {};
+      Object.keys(v).sort().forEach(k => { if (k !== 'thumb' && v[k] != null) o[k] = norm(v[k]); });
+      return o;
+    }
+    return v;
+  };
+  return JSON.stringify(norm({ checkins: w.checkins || {}, slotLogs: w.slotLogs || {}, workoutLogs: w.workoutLogs || [],
+    mealScans: w.mealScans || {}, barcodeScans: w.barcodeScans || {}, retestDone: w.retestDone || {} }));
 }
 
 // Fold a newly arrived copy of a week into the stored one. Per day, the copy
@@ -1002,8 +1029,12 @@ async function sweepInboxes(opts) {
         try { outcome = mergeClientWeek(payload); }
         catch(e) { outcome = { success: false }; }
         if (outcome.success) {
-          imported++;
-          if (!names.includes(outcome.clientName)) names.push(outcome.clientName);
+          // Every saved copy is acked; only copies that brought new data count
+          // as "new check-ins" (identical re-sends are silent, v=66).
+          if (outcome.changed) {
+            imported++;
+            if (!names.includes(outcome.clientName)) names.push(outcome.clientName);
+          }
           if (payload._ackId != null) ackIds.push(payload._ackId);
         }
       }
@@ -4852,7 +4883,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=65';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=66';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -5080,7 +5111,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=65',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=66',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5307,6 +5338,8 @@ function buildCheckinsPanel(c) {
     const sessions = (w.scoreBreakdown && w.scoreBreakdown.workouts != null) ? w.scoreBreakdown.workouts : (w.workoutLogs || []).length;
     const freq = w.scoreBreakdown && w.scoreBreakdown.freq ? w.scoreBreakdown.freq : '';
     const recv = w.uploadedAt ? new Date(w.uploadedAt).toLocaleDateString('en-US', {month:'short', day:'numeric'}) : '—';
+    const upd = w.updatedAt ? new Date(w.updatedAt).toLocaleDateString('en-US', {month:'short', day:'numeric'}) : '';
+    const recvText = recv + (upd && upd !== recv ? ' · updated ' + upd : '');
 
     const wlogs = w.workoutLogs || [];
     const sessionsHtml = wlogs.length ? wlogs.map(l => {
@@ -5343,7 +5376,7 @@ function buildCheckinsPanel(c) {
             <span style="font-family:Bebas Neue,sans-serif;font-size:16px;color:var(--gold);letter-spacing:.04em">${w.weekScore || 0}<span style="font-size:10px;color:var(--dim)">/35</span></span>
             <span style="font-size:11px;color:var(--dim-2)">${freq ? Math.min(sessions, freq) + '/' + freq : sessions} session${(freq ? Math.min(sessions, freq) : sessions) !== 1 ? 's' : ''}${freq && sessions > freq ? ' <span style="color:var(--dim)">(+' + (sessions - freq) + ' extra)</span>' : ''}</span>
           </div>
-          <div style="font-size:10px;color:var(--dim);margin-top:2px">Received ${recv} · 🔥 ${w.streak || 0} wk streak</div>
+          <div style="font-size:10px;color:var(--dim);margin-top:2px">Received ${recvText} · 🔥 ${w.streak || 0} wk streak</div>
         </div>
         <span id="${rowId}-caret" style="color:var(--dim);font-size:12px;flex-shrink:0">▸</span>
       </div>
@@ -7904,7 +7937,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=65';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=66';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
