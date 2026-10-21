@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=67 -->
+<!-- portal cache-buster v=68 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -3946,8 +3946,14 @@ function buildWeeklyPayload(offset=0) {
       if (!checks) return;
       const logs = {};
       Object.entries(checks).forEach(([key, val]) => {
-        if (key.endsWith('_log') && val && (val.weight || val.reps || val.rpe || val.sets) && tsInWeek(val.ts)) {
-          logs[key.replace('_log','')] = {weight:val.weight, reps:val.reps, unit:val.unit||'lbs', rpe:val.rpe||'', sets:val.sets||'', ts:val.ts, note:(val.note||'')};
+        // v=68: pain / modified / swap / mode / total load travel too (captured
+        // since v=43 and read by the coach's PAIN·MODIFIED·SWAPPED alerts and
+        // load charts, but dropped here), and a log with no numbers — e.g. a
+        // pain-only report — is no longer skipped.
+        if (key.endsWith('_log') && val && (val.weight || val.reps || val.rpe || val.sets || val.note || val.exercise || val.pain || val.modified) && tsInWeek(val.ts)) {
+          logs[key.replace('_log','')] = {weight:val.weight, reps:val.reps, unit:val.unit||'lbs', rpe:val.rpe||'', sets:val.sets||'', ts:val.ts, note:(val.note||''),
+            mode:val.mode||'', perSide:!!val.perSide, totalLoad:(val.totalLoad != null ? val.totalLoad : null),
+            exercise:val.exercise||'', prescribed:val.prescribed||'', modified:!!val.modified, pain:!!val.pain};
         }
       });
       // Attendance: a session marked done travels even with no slot inputs, but
@@ -4442,7 +4448,34 @@ window.addEventListener('load', function () {
   window.addEventListener('pagehide', flushCurrentWeekBeacon);
   deliverCurrentWeek();
   startSyncWatcher();
+  setTimeout(backfillRichSlotLogs, 8000);
 });
+
+// v=68 one-time backfill: before v=68 the weekly send dropped pain / modified /
+// swap / mode from Program-tab logs (and skipped logs with no numbers). This
+// week and last week re-send on their own (their content changed); weeks 2–6
+// back are re-sent ONCE here, and only if they actually hold one of those
+// signals — so the coach finally sees what was missed, without re-sending
+// every old week. Marked done in sync state once every such week is confirmed.
+async function backfillRichSlotLogs() {
+  try {
+    if (!client || !clientId) return;
+    var st = syncState();
+    if (st.backfill68) return;
+    var allOk = true;
+    for (var off = -2; off >= -6; off--) {
+      var p = buildWeeklyPayload(off);
+      if (!p || !p.clientId || p.weekKey !== weekKey(off)) continue;
+      var rich = Object.values(p.slotLogs || {}).some(function (logs) {
+        return Object.keys(logs || {}).some(function (k) { var v = logs[k]; return k.charAt(0) !== '_' && v && (v.pain || v.modified || v.exercise || v.mode || v.totalLoad != null); });
+      });
+      if (!rich) continue;
+      var ok = await withSendLock(function () { return _postWeekNow(p); });
+      if (!ok) { allOk = false; break; }
+    }
+    if (allOk) { var s2 = syncState(); s2.backfill68 = Date.now(); saveSyncState(s2); }
+  } catch (e) {}
+}
 // Barcode day-log overlay (packaged-food lane). Runs AFTER init's renderNRDailyLog
 // (registered later = fires later), overlaying the unified list when the day has
 // barcode items. Same post-init load-hook sibling pattern as above; init untouched.
