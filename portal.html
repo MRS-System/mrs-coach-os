@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=69 -->
+<!-- portal cache-buster v=70 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1996,6 +1996,11 @@ function sanitizeProfileData(v) {
     try { var q2 = new URLSearchParams(window.location.search); q2.delete('profile'); history.replaceState(null, '', window.location.pathname + (q2.toString() ? '?' + q2.toString() : '') + window.location.hash); } catch (_) {}
   }
 })();
+// Same restore before init draws anything — covers a phone that already
+// switched back under v=69 code (its ticks were left in the archive).
+(function restoreTicksBeforeInit() {
+  try { var pdb = portalDb(); if (restoreArchivedTicks(pdb)) savePortalDb(pdb); } catch (e) {}
+})();
 
 // v=69: the Worker's meal scanner only serves MRS portals now. Scan requests
 // are tagged with this client's link code (?p=) and client id, so the Worker can
@@ -2897,7 +2902,24 @@ function startNewProgramIfSwitched(pdb, prevShown) {
   if (pdb.slotChecks && Object.keys(pdb.slotChecks).length) pdb.slotChecksArchive[prevShown] = pdb.slotChecks;
   pdb.slotChecks = {};
   pdb.programSwitchedAt = Date.now();
-  setTimeout(function(){ try { showToast('New program from your coach 💪 Week 1 starts fresh.'); } catch(e){} }, 900);
+  var back = restoreArchivedTicks(pdb);
+  setTimeout(function(){ try { showToast(back ? 'Back to your program 💪 Your logs are restored.' : 'New program from your coach 💪 Week 1 starts fresh.'); } catch(e){} }, 900);
+  return true;
+}
+// v=70: switching BACK to a program the phone showed before brings its ticks
+// back from the archive (a stale push flipped Nick to an old program and hid his
+// Monday log). Ticks already on the phone win over archived ones.
+function restoreArchivedTicks(pdb) {
+  var now = shownProgramId(pdb.clientProfile);
+  var arch = now && pdb.slotChecksArchive && pdb.slotChecksArchive[now];
+  if (!arch) return false;
+  pdb.slotChecks = pdb.slotChecks || {};
+  Object.keys(arch).forEach(function (sess) {
+    var cur = pdb.slotChecks[sess];
+    if (!cur) { pdb.slotChecks[sess] = arch[sess]; return; }
+    Object.keys(arch[sess] || {}).forEach(function (k) { if (!(k in cur)) cur[k] = arch[sess][k]; });
+  });
+  delete pdb.slotChecksArchive[now];
   return true;
 }
 
