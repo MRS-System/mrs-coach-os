@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=71 -->
+<!-- portal cache-buster v=72 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2029,6 +2029,36 @@ function tagScanRequests() {
   window.fetch = wrapped;
 }
 tagScanRequests();
+
+// v=72: meter tag. Every call to the Worker carries this app's version and the
+// phone's sync device id (?mv=p72&md=…), so the Worker's request log shows which
+// phones are on old code and which link each one opens. Read-only: the device id
+// is never created here (the sync code creates it on the first send).
+var MRS_PORTAL_V = 'v=72';
+function meterTagUrl(url) {
+  if (typeof url !== 'string' || url.indexOf('mrs-nutrireader-worker.mrs-system.workers.dev/') === -1 || url.indexOf('mv=') !== -1) return url;
+  var dev = '';
+  try { dev = (JSON.parse(localStorage.getItem('mrs_sync_state_v1') || 'null') || {}).device || ''; } catch (e) {}
+  return url + (url.indexOf('?') === -1 ? '?' : '&') + 'mv=p' + MRS_PORTAL_V.slice(2) + (dev ? '&md=' + encodeURIComponent(dev) : '');
+}
+(function meterTagRequests() {
+  var orig = window.fetch;
+  if (orig && !orig._mrsMetered) {
+    var wrapped = function (input, init) {
+      try { if (typeof input === 'string') input = meterTagUrl(input); } catch (e) {}
+      return orig.call(this, input, init);
+    };
+    wrapped._mrsTagged = orig._mrsTagged; wrapped._mrsMetered = true;
+    window.fetch = wrapped;
+  }
+  try {
+    var beacon = navigator.sendBeacon && navigator.sendBeacon.bind(navigator);
+    if (beacon && !navigator._mrsMetered) {
+      navigator.sendBeacon = function (url, data) { try { url = meterTagUrl(url); } catch (e) {} return beacon(url, data); };
+      navigator._mrsMetered = true;
+    }
+  } catch (e) {}
+})();
 
 function todayKey(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
 function weekKey(offset=0){const d=new Date();d.setDate(d.getDate()-d.getDay()+(offset*7));return`week-${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}

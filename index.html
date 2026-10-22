@@ -790,6 +790,33 @@ function renderStorageBanner() {
 }
 try { clearStorageProbes(); } catch (e) {}   // leftovers if a probe was ever cut short
 
+// v=72: meter tag. Every Worker call from the Coach OS carries its version and a
+// device id (?mv=c72&md=…), so the Worker's request log shows which pushes came
+// from the automatic update (stamped) vs Update Portal, and from which device.
+var MRS_COACH_V = 'v=72';
+function coachDeviceId() {
+  try {
+    var d = localStorage.getItem('mrs_coach_device_v1');
+    if (!d) { d = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); localStorage.setItem('mrs_coach_device_v1', d); }
+    return d;
+  } catch (e) { return ''; }
+}
+(function meterTagRequests() {
+  var orig = window.fetch;
+  if (!orig || orig._mrsMetered) return;
+  var wrapped = function (input, init) {
+    try {
+      if (typeof input === 'string' && input.indexOf('mrs-nutrireader-worker.mrs-system.workers.dev/') !== -1 && input.indexOf('mv=') === -1) {
+        var dev = coachDeviceId();
+        input += (input.indexOf('?') === -1 ? '?' : '&') + 'mv=c' + MRS_COACH_V.slice(2) + (dev ? '&md=' + encodeURIComponent(dev) : '');
+      }
+    } catch (e) {}
+    return orig.call(this, input, init);
+  };
+  wrapped._mrsMetered = true;
+  window.fetch = wrapped;
+})();
+
 function getKey() {
   try { const k = localStorage.getItem(API_KEY); if(k) return k; } catch(e) {}
   const m = document.cookie.match(new RegExp('(?:^|; )' + API_KEY + '=([^;]*)'));
@@ -4941,7 +4968,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=71';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=72';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -5169,7 +5196,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=71',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=72',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -8028,7 +8055,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=71';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=72';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
