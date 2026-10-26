@@ -820,7 +820,7 @@ function dropDuplicateMealThumbs(week) {
 // v=72: meter tag. Every Worker call from the Coach OS carries its version and a
 // device id (?mv=c72&md=…), so the Worker's request log shows which pushes came
 // from the automatic update (stamped) vs Update Portal, and from which device.
-var MRS_COACH_V = 'v=75';
+var MRS_COACH_V = 'v=76';
 function coachDeviceId() {
   try {
     var d = localStorage.getItem('mrs_coach_device_v1');
@@ -5038,7 +5038,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=75';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=76';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -5266,7 +5266,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=75',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=76',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -6195,7 +6195,18 @@ function importData() {
         }
         const count = parsed.clients.length;
         if (!confirm('This will replace ALL current data with ' + count + ' client(s) from the backup.\n\nThis cannot be undone. Continue?')) return;
-        saveDb(parsed);
+        // v=76: backups made before v=73 hold every meal photo twice and can be
+        // bigger than an iPhone's storage (~2.3M characters) — the restore failed
+        // with "Could not read file". Keep one copy of each photo (same rule as
+        // v=73: only where the identical photo is in that week's meal scans).
+        parsed.clients.forEach(function (c) { (c.weeklyData || []).forEach(dropDuplicateMealThumbs); });
+        try { saveDb(parsed); }
+        catch (saveErr) {
+          // Nothing was replaced: the phone still holds the data it had.
+          _saveFailedAt = 0; try { renderStorageBanner(); } catch (_) {}
+          alert('This backup (' + (JSON.stringify(parsed).length / 1048576).toFixed(1) + 'M) is too big for this phone\u2019s storage, so nothing was changed. Your current data is untouched.');
+          return;
+        }
         toast('Restored ' + count + ' client(s) ✓');
         renderDashboard();
         nav('dashboard');
@@ -8125,7 +8136,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=75';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=76';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
