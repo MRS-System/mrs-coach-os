@@ -825,7 +825,7 @@ function dropDuplicateMealThumbs(week) {
 // v=72: meter tag. Every Worker call from the Coach OS carries its version and a
 // device id (?mv=c72&md=…), so the Worker's request log shows which pushes came
 // from the automatic update (stamped) vs Update Portal, and from which device.
-var MRS_COACH_V = 'v=78';
+var MRS_COACH_V = 'v=79';
 function coachDeviceId() {
   try {
     var d = localStorage.getItem('mrs_coach_device_v1');
@@ -5044,7 +5044,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=78';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=79';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -5094,6 +5094,7 @@ async function pushPortalProfile(clientId) {
     if (!res.ok) throw new Error('status ' + res.status);
     var d = db(), cc = (d.clients || []).find(function(x){ return x.id === clientId; });
     if (cc) { cc.portalPushedAt = Date.now(); cc.portalPushedProgramId = c.activeProgramId || null; cc.portalPushFailed = false; saveDb(d); }
+    mirrorClientToDb(clientId).catch(function () {}); // v=79: same change into the new database (side by side)
     return 'pushed';
   } catch (e) {
     var d2 = db(), c2 = (d2.clients || []).find(function(x){ return x.id === clientId; });
@@ -5101,6 +5102,74 @@ async function pushPortalProfile(clientId) {
     return 'failed';
   }
 }
+// ── v=79: the side-by-side week (migration step 5c) ───────────────────
+// Every time a client's link is updated, the same client — profile, programs
+// (added / changed / deleted), active program, measurements, current link and
+// challenge block — is written to the new Supabase database too, through the
+// coach's own Cloud Backup login (row security applies). Clients still read their
+// link; the leak detector compares link vs database daily. A failure here never
+// touches the link update: it's recorded in mrs_db_mirror_v1 and nothing else.
+var DB_MIRROR_KEY = 'mrs_db_mirror_v1';
+function dbMirrorNote(v) { try { var n = JSON.parse(localStorage.getItem(DB_MIRROR_KEY) || '{}'); localStorage.setItem(DB_MIRROR_KEY, JSON.stringify(Object.assign(n, v))); } catch (e) {} }
+function dbDay(ms) { return new Date(ms).toISOString().slice(0, 10); }
+async function mirrorClientToDb(clientId) {
+  var sb = sbClient(); if (!sb) return 'nolib';
+  var sess = (await sb.auth.getSession()).data;
+  if (!sess || !sess.session) return 'signedout';
+  var d = db(), c = (d.clients || []).find(function (x) { return x.id === clientId; });
+  if (!c || !c.portalBlobId) return 'nolink';
+  var ck = function (r) { if (r && r.error) throw new Error(r.error.message || 'database error'); return r; };
+  try {
+    if (c.challengeBlockId) {
+      var b = challengeBlocks(d).find(function (x) { return x.id === c.challengeBlockId; });
+      if (b) ck(await sb.from('challenge_blocks').upsert({ id: b.id, name: b.name || '', start_date: b.startDate || null }, { onConflict: 'id' }));
+    }
+    ck(await sb.from('clients').upsert({ id: c.id, name: c.name || '', email: c.email || null, phone: c.phone || null, age: c.age || null,
+      gender: c.gender || null, avatar: c.avatar || null, level: c.level || null, freq: c.freq || null, goal: c.goal || null,
+      client_type: c.clientType || '1on1', cohort: c.cohort || null, challenge_block_id: c.challengeBlockId || null,
+      status: c.status || 'active', flags: c.flags || [], intake: c.intake || {} }, { onConflict: 'id' }));
+    var rows = (c.programs || []).map(function (p) { return { id: p.id, client_id: c.id, title: p.title || null, avatar: p.avatar || null,
+      level: p.level || null, freq: p.freq || null, goal: p.goal || null, flags: p.flags || [], block1: p.block1 || null, block2: p.block2 || null,
+      block1_only: !!p.block1Only, partial: !!p.partial,
+      start_date: /^\d{4}-\d{2}-\d{2}$/.test(p.startDay || '') ? p.startDay : (p.date ? dbDay(p.date) : null),
+      start_day_set: !!p.startDay, built_at: new Date(p.date || Date.now()).toISOString() }; });
+    if (rows.length) ck(await sb.from('programs').upsert(rows, { onConflict: 'id' }));
+    var have = (ck(await sb.from('programs').select('id').eq('client_id', c.id)).data) || [];
+    var gone = have.map(function (r) { return r.id; }).filter(function (id) { return !rows.some(function (r) { return r.id === id; }); });
+    if (gone.length) ck(await sb.from('programs').delete().in('id', gone));
+    var act = rows.some(function (r) { return r.id === c.activeProgramId; }) ? c.activeProgramId : null;
+    ck(await sb.from('clients').update({ active_program_id: act }).eq('id', c.id));
+    var m = c.measurements && !Array.isArray(c.measurements) ? c.measurements : {};
+    var mrows = Object.keys(m).filter(function (k) { return m[k] && typeof m[k] === 'object'; }).map(function (k) {
+      var rec = Object.assign({}, m[k]), at = rec.date; delete rec.date;
+      return { client_id: c.id, program_id: null, checkpoint: k, data: rec, recorded_at: new Date(at || Date.now()).toISOString(),
+               source: k.indexOf('challenge_selftest') === 0 ? 'client' : 'coach' }; });
+    if (mrows.length) ck(await sb.from('measurements').upsert(mrows, { onConflict: 'client_id,checkpoint,program_id' }));
+    ck(await sb.from('portal_tokens').upsert({ token: c.portalBlobId, client_id: c.id, label: 'current link' }, { onConflict: 'token', ignoreDuplicates: true }));
+    dbMirrorNote({ ok: true, at: Date.now(), client: c.id, err: null });
+    return 'mirrored';
+  } catch (e) {
+    dbMirrorNote({ ok: false, at: Date.now(), client: c.id, err: String(e && e.message || e).slice(0, 160) });
+    return 'failed';
+  }
+}
+// Once a day on open: bring every linked client's database copy up to date
+// (catches anything changed while signed out or offline).
+async function mirrorAllClientsDaily() {
+  var note = {}; try { note = JSON.parse(localStorage.getItem(DB_MIRROR_KEY) || '{}'); } catch (e) {}
+  if (note.dailyOn === dbDay(Date.now()) || navigator.onLine === false) return 0;
+  var n = 0;
+  for (var c of (db().clients || [])) {
+    if (!c.portalBlobId) continue;
+    var r = await mirrorClientToDb(c.id);
+    if (r === 'signedout' || r === 'nolib') return 0;
+    if (r === 'mirrored') n++;
+  }
+  dbMirrorNote({ dailyOn: dbDay(Date.now()), dailyCount: n });
+  return n;
+}
+window.addEventListener('load', function () { setTimeout(function () { mirrorAllClientsDaily().catch(function () {}); }, 6000); });
+
 function schedulePortalPush(clientId) {
   if (!clientId) return;
   clearTimeout(_portalPushTimers[clientId]);
@@ -5291,7 +5360,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=78',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=79',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -8210,7 +8279,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=78';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=79';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
@@ -8236,6 +8305,7 @@ async function pushChallengeProfile(c) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildChallengePortalProfile(c))
     });
+    if (res.ok) mirrorClientToDb(c.id).catch(function () {}); // v=79: side-by-side database copy
     return res.ok ? 'pushed' : 'failed';
   } catch(e) { return 'failed'; }
 }
