@@ -335,6 +335,7 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
       <!-- ══ DASHBOARD ══ -->
       <div class="screen active" id="screen-dashboard">
         <div id="storageBanner"></div>
+        <div id="backupBanner"></div>
         <div class="stat-grid" id="statsGrid"></div>
         <div class="section-div">Recent Clients</div>
         <div class="client-grid" id="recentClients"></div>
@@ -721,6 +722,10 @@ function esc(v) {
 
 function saveDb(data) {
   try {
+    // v=77: when this data last CHANGED (not when it was uploaded). The cloud
+    // backup compares these times, never "which device wrote last" — that
+    // comparison is what offered a 6-day-old copy over newer data (Oct 26).
+    if (data && typeof data === 'object') { data._savedAt = Date.now(); try { data._savedBy = coachDeviceId(); } catch (_) {} }
     localStorage.setItem(DB_KEY, JSON.stringify(data));
     // Cloud mirror — strictly downstream of a successful local save, and it can
     // never throw into this path. localStorage remains the source of truth.
@@ -820,7 +825,7 @@ function dropDuplicateMealThumbs(week) {
 // v=72: meter tag. Every Worker call from the Coach OS carries its version and a
 // device id (?mv=c72&md=…), so the Worker's request log shows which pushes came
 // from the automatic update (stamped) vs Update Portal, and from which device.
-var MRS_COACH_V = 'v=76';
+var MRS_COACH_V = 'v=77';
 function coachDeviceId() {
   try {
     var d = localStorage.getItem('mrs_coach_device_v1');
@@ -1606,6 +1611,7 @@ function avColor(a) { return AV_COLORS[a] || 'rgba(255,255,255,.05)'; }
 // ══════════════════════════════════════════════════════════════════
 function renderDashboard() {
   try { renderStorageBanner(); } catch (e) {}
+  try { renderBackupBanner(); } catch (e) {}
   const data = db();
   const clients = data.clients || [];
   const totalPrograms = clients.reduce((acc, c) => acc + (c.programs || []).length, 0);
@@ -5038,7 +5044,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=76';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=77';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -5266,7 +5272,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=76',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=77',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -7821,13 +7827,32 @@ function queueCloudMirror(data) {
   }, 3000);
 }
 
+// v=77: content time of a copy; null for copies made before v=77.
+function dataSavedAt(d) { return d && typeof d._savedAt === 'number' ? d._savedAt : null; }
+function fmtWhen(ms) { return ms ? new Date(ms).toLocaleString() : 'unknown'; }
+// Content time of the cloud copy; copies uploaded before v=77 only have their upload time.
+function cloudContentTime(meta) { return !meta ? null : typeof meta.saved === 'number' ? meta.saved : (meta.updated_at ? Date.parse(meta.updated_at) : null); }
+// Does the cloud copy hold work this device hasn't seen? Never when THIS device
+// wrote it (phone-only coach: its own uploads can't block it again). When another
+// device wrote it: yes, unless this device already loaded that copy (_pulledFrom).
+// Copies from before v=77 (no writer recorded): only if their time is newer.
+function cloudHasUnseenWork(meta, local) {
+  if (!meta) return false;
+  var cloudSaved = cloudContentTime(meta), mine = '';
+  try { mine = coachDeviceId(); } catch (_) {}
+  if (meta.by && mine && meta.by === mine) return false;
+  if (meta.by) return !!cloudSaved && cloudSaved > ((local && local._pulledFrom) || 0);
+  var localSaved = dataSavedAt(local);
+  return !!cloudSaved && (!localSaved || cloudSaved > localSaved);
+}
+
 // Read just the metadata (never the 1.2MB blob) so the guard is cheap.
 async function cloudFetchMeta() {
   const sb = sbClient(); if (!sb) return null;
   const { data: sess } = await sb.auth.getSession();
   if (!sess || !sess.session || !sess.session.user) return null;
   const { data, error } = await sb.from('coach_backups')
-    .select('client_count,size_bytes,updated_at').eq('owner', sess.session.user.id).maybeSingle();
+    .select('client_count,size_bytes,updated_at,saved:data->_savedAt,by:data->>_savedBy').eq('owner', sess.session.user.id).maybeSingle();
   if (error) throw error;
   return data || null;
 }
@@ -7842,7 +7867,7 @@ async function cloudPull(apply) {
     .select('data,client_count,size_bytes,updated_at').eq('owner', sess.session.user.id).maybeSingle();
   if (error) throw error;
   if (!data || !data.data) return null;
-  if (apply) { _cloudSynced = true; _cloudBlocked = null; saveDb(data.data); }
+  if (apply) { _cloudSynced = true; _cloudBlocked = null; data.data._pulledFrom = dataSavedAt(data.data) || Date.parse(data.updated_at) || Date.now(); saveDb(data.data); }
   return data;
 }
 
@@ -7860,26 +7885,28 @@ async function mirrorToCloud(data) {
     if (!sess || !sess.session || !sess.session.user) { setCloudDot('off','Cloud Backup','Not signed in — tap to connect'); return; }
     const owner = sess.session.user.id;
     // ── GUARD ── never overwrite work this device has not seen.
-    // v=40 compared CLIENT COUNTS only, which missed the case that actually
-    // matters: another device edits a client (a Week 4 retest, say) without
-    // changing the headcount. 8 is not > 8, so the stale device pushed straight
-    // over it. Compare RECENCY first; count is now a secondary signal.
+    // v=77: compare WHEN THE DATA CHANGED, not who uploaded last. Before, a
+    // note this phone failed to save (storage full) made its own uploads look
+    // "foreign", backup paused for 6 days, and the app then offered the stale
+    // cloud copy as if it were newer. Pause only if the cloud really holds
+    // newer data, or more clients than a device that has never synced (a
+    // fresh, empty phone must not wipe the cloud).
     if (!_cloudSynced) {
       let meta = null;
       try { meta = await cloudFetchMeta(); } catch(e) { meta = null; }
       const incoming = (data.clients||[]).length;
-      const last = cloudLastOk();
-      const cloudStamp = meta && meta.updated_at ? meta.updated_at : null;
-      const oursStamp  = last && last.cloudAt ? last.cloudAt : null;
-      const cloudIsForeign = !!cloudStamp && (!oursStamp || cloudStamp !== oursStamp);
+      const localSaved = dataSavedAt(data);
+      const cloudSaved = cloudContentTime(meta);
+      const cloudNewer = cloudHasUnseenWork(meta, data);
       const shrinking = meta && typeof meta.client_count === 'number' && meta.client_count > incoming;
-      if (meta && (cloudIsForeign || shrinking)) {
-        _cloudBlocked = { cloud: meta.client_count, local: incoming, at: meta.updated_at,
-                          reason: cloudIsForeign ? 'newer' : 'fewer' };
+      if (meta && (cloudNewer || shrinking)) {
+        _cloudBlocked = { cloud: meta.client_count, local: incoming, at: meta.updated_at, cloudSaved: cloudSaved, localSaved: localSaved,
+                          reason: cloudNewer ? 'newer' : 'fewer' };
         setCloudDot('off', 'Backup paused',
-          (cloudIsForeign ? 'Cloud was changed by another device' : 'Cloud has ' + meta.client_count + ' clients, this device has ' + incoming)
+          (cloudNewer ? 'Cloud has newer data (' + fmtWhen(cloudSaved) + ') than this device (' + fmtWhen(localSaved) + ')' : 'Cloud has ' + meta.client_count + ' clients, this device has ' + incoming)
           + ' — tap to resolve');
-        console.warn('cloud mirror BLOCKED (' + _cloudBlocked.reason + '): cloud ' + cloudStamp + ' vs ours ' + oursStamp);
+        console.warn('cloud mirror BLOCKED (' + _cloudBlocked.reason + '): cloud data ' + fmtWhen(cloudSaved) + ' vs this device ' + fmtWhen(localSaved));
+        try { renderBackupBanner(); } catch(_) {}
         return;
       }
       _cloudSynced = true;
@@ -7898,6 +7925,25 @@ async function mirrorToCloud(data) {
     setCloudLast({ ok: false, at: Date.now() });
   }
   refreshCloudDot();
+  try { renderBackupBanner(); } catch(_) {}
+}
+
+// v=77: the backup's state on the Dashboard, in red, whenever it is paused,
+// failing, or behind this phone's changes — it used to be a small dot only,
+// and a paused backup went unnoticed for 6 days.
+function renderBackupBanner() {
+  var el = document.getElementById('backupBanner');
+  if (!el) return;
+  var last = cloudLastOk(), localSaved = dataSavedAt(db()), msg = '';
+  if (_cloudBlocked) msg = _cloudBlocked.reason === 'newer'
+    ? 'Cloud backup paused: the cloud has newer data (' + fmtWhen(_cloudBlocked.cloudSaved) + ') than this phone (' + fmtWhen(_cloudBlocked.localSaved) + '). Nothing was overwritten.'
+    : 'Cloud backup paused: the cloud has ' + _cloudBlocked.cloud + ' clients, this phone has ' + _cloudBlocked.local + '. Nothing was overwritten.';
+  else if (last && last.ok === false) msg = 'Cloud backup failed at ' + fmtWhen(last.at) + '. Your changes are only on this phone.';
+  else if (last && last.ok && localSaved && localSaved - last.at > 15 * 60000) msg = 'Changes since ' + fmtWhen(last.at) + ' are not in your cloud backup yet.';
+  el.innerHTML = msg
+    ? '<div style="border:1px solid var(--red);color:var(--red);border-radius:10px;padding:10px 12px;margin:0 0 14px;font-size:13px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">'
+      + '<span>⚠ ' + esc(msg) + '</span><button class="btn gold" onclick="openCloudModal()">Open Cloud Backup</button></div>'
+    : '';
 }
 
 function openCloudModal() {
@@ -7906,7 +7952,7 @@ function openCloudModal() {
   const status = !sb ? '<div style="background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.2);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--red)">Supabase library did not load — check your connection and reload.</div>'
     : _cloudBlocked ? '<div style="background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.25);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--red);line-height:1.7"><strong>Backup paused to protect your data.</strong><br>'
       + (_cloudBlocked.reason === 'newer'
-          ? 'Your cloud copy was last saved from another device' + (_cloudBlocked.at ? ' at ' + new Date(_cloudBlocked.at).toLocaleString() : '') + ' (' + _cloudBlocked.cloud + ' clients); this device has ' + _cloudBlocked.local + '. It may contain work this device has not seen.'
+          ? 'Your cloud copy has newer data (from ' + fmtWhen(_cloudBlocked.cloudSaved) + ', ' + _cloudBlocked.cloud + ' clients) than this device (from ' + fmtWhen(_cloudBlocked.localSaved) + ', ' + _cloudBlocked.local + ' clients). It may contain work this device has not seen.'
           : 'Your cloud copy has ' + _cloudBlocked.cloud + ' clients; this device has ' + _cloudBlocked.local + '.')
       + '<br>Nothing was overwritten.<br>Use <strong>Verify Restore</strong> to see what is in the cloud, then either restore it onto this device or press Back Up Now to deliberately replace it.</div>'
     : last && last.ok ? '<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--green)">Last copy saved ' + new Date(last.at).toLocaleString() + (last.clients!=null?' · '+last.clients+' clients · '+Math.round((last.bytes||0)/1024)+' KB':'') + '</div>'
@@ -7963,8 +8009,10 @@ async function cloudBackupNow() {
   const msg = document.getElementById('sbMsg');
   // Pressing this button IS the deliberate override of the shrink guard.
   if (_cloudBlocked) {
-    if (!confirm('Your cloud copy has ' + _cloudBlocked.cloud + ' client(s); this device has ' + _cloudBlocked.local +
-                 '.\n\nBacking up now REPLACES the cloud copy with this device\'s data.\n\nContinue?')) return;
+    var why = _cloudBlocked.reason === 'newer'
+      ? 'Your cloud copy has NEWER data than this device.\n\nCloud data from: ' + fmtWhen(_cloudBlocked.cloudSaved) + '\nThis device\'s data from: ' + fmtWhen(_cloudBlocked.localSaved)
+      : 'Your cloud copy has ' + _cloudBlocked.cloud + ' client(s); this device has ' + _cloudBlocked.local + '.';
+    if (!confirm(why + '\n\nBacking up now REPLACES the cloud copy with this device\'s data.\n\nContinue?')) return;
     _cloudBlocked = null;
   }
   _cloudSynced = true;
@@ -8007,8 +8055,13 @@ async function cloudRestoreNow() {
     const row = await cloudPull(false);
     if (!row) { if(msg){msg.textContent='No backup found in the cloud yet.';msg.style.color='var(--red)';} return; }
     const n = (row.data.clients||[]).length, localN = (db().clients||[]).length;
-    if (!confirm('Replace this device\'s data with the cloud copy?\n\nCloud: ' + n + ' client(s), saved '
-      + new Date(row.updated_at).toLocaleString() + '\nThis device: ' + localN + ' client(s)\n\nThis cannot be undone.')) return;
+    // v=77: show when each copy's DATA is from, and stop hard if the cloud is older.
+    const cloudSaved = dataSavedAt(row.data) || Date.parse(row.updated_at), localSaved = dataSavedAt(db());
+    const older = localSaved && cloudSaved && cloudSaved < localSaved;
+    if (!confirm((older ? '⚠ The cloud copy is OLDER than this device\'s data.\nRestoring it ERASES everything changed on this device since ' + fmtWhen(cloudSaved) + '.\n\n' : '')
+      + 'Replace this device\'s data with the cloud copy?\n\nCloud: ' + n + ' client(s), data from ' + fmtWhen(cloudSaved)
+      + '\nThis device: ' + localN + ' client(s), data from ' + fmtWhen(localSaved) + '\n\nThis cannot be undone.')) return;
+    if (older && !confirm('Are you sure? This erases this device\'s newer data and cannot be undone.')) return;
     await cloudPull(true);
     toast('Restored ' + n + ' client(s) from cloud');
     document.getElementById('measureModal').classList.remove('active');
@@ -8045,15 +8098,17 @@ window.addEventListener('load', function(){ setTimeout(async function(){
       }
       return;
     }
-    // Offer to pull whenever the cloud was last written by a DIFFERENT device —
-    // not only when it has more clients. A Week 4 retest added on the phone does
-    // not change the headcount, and the old condition never fired for it.
-    const last = cloudLastOk();
-    const oursStamp = last && last.cloudAt ? last.cloudAt : null;
-    if (localCount > 0 && meta.updated_at && meta.updated_at !== oursStamp) {
-      if (confirm('Your cloud backup was last saved from another device.\n\nCloud: ' + meta.client_count +
-                  ' client(s), saved ' + when + '\nThis device: ' + localCount + ' client(s)\n\n' +
-                  'Load the cloud copy onto this device?\n(Cancel keeps this device\'s copy — nothing is overwritten either way until you choose.)')) {
+    // v=77: offer the cloud copy ONLY when another device saved work this one
+    // hasn't loaded. The old check asked whenever the upload stamp differed — on
+    // Oct 26 it offered this phone's own 6-day-old copy and replaced newer data.
+    // Never offered for this device's own uploads or for copies made before v=77.
+    const local = db();
+    if (localCount > 0 && meta.by && cloudHasUnseenWork(meta, local)) {
+      const cloudSaved = cloudContentTime(meta), localSaved = dataSavedAt(local);
+      if (confirm('Another device saved changes to your cloud backup that this device hasn\'t loaded.\n\nCloud: ' + meta.client_count + ' client(s), data from ' + fmtWhen(cloudSaved) +
+                  '\nThis device: ' + localCount + ' client(s), data from ' + fmtWhen(localSaved) +
+                  (localSaved && cloudSaved && localSaved > cloudSaved ? '\n\n⚠ This device ALSO has newer changes. Loading the cloud copy erases them.' : '') +
+                  '\n\nLoad the cloud copy onto this device?\n(Cancel keeps this device\'s copy and pauses backup until you decide.)')) {
         await cloudPull(true); toast('Loaded cloud copy'); renderDashboard(); nav('dashboard');
       }
     }
@@ -8136,7 +8191,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=76';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=77';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
