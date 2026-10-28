@@ -825,7 +825,7 @@ function dropDuplicateMealThumbs(week) {
 // v=72: meter tag. Every Worker call from the Coach OS carries its version and a
 // device id (?mv=c72&md=…), so the Worker's request log shows which pushes came
 // from the automatic update (stamped) vs Update Portal, and from which device.
-var MRS_COACH_V = 'v=77';
+var MRS_COACH_V = 'v=78';
 function coachDeviceId() {
   try {
     var d = localStorage.getItem('mrs_coach_device_v1');
@@ -5044,7 +5044,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=77';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=78';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -5114,6 +5114,25 @@ function schedulePortalPush(clientId) {
     });
   }, 1500);
 }
+
+// v=78: one-time catch-up. Measurements saved before automatic updates existed
+// (v=63, Oct 20) and challenge self-tests (sent back only from v=78) never reached
+// some clients' links. On open, any client whose newest measurement is newer than
+// its last link update gets one quiet update; afterwards its update time is newer,
+// so it doesn't repeat. Sends this device's current data, like any save does.
+async function catchUpMeasurementPushes() {
+  if (navigator.onLine === false) return 0;
+  var n = 0;
+  for (var c of (db().clients || [])) {
+    if (!c.portalBlobId || c.status === 'inactive') continue;
+    var m = c.measurements && !Array.isArray(c.measurements) ? c.measurements : {};
+    var newest = Math.max(0, ...Object.values(m).map(function (r) { return (r && Number(r.date)) || 0; }));
+    if (newest && newest > (c.portalPushedAt || 0)) { if ((await pushPortalProfile(c.id)) === 'pushed') n++; }
+  }
+  if (n) console.log('v=78: measurements caught up on ' + n + ' client link(s)');
+  return n;
+}
+window.addEventListener('load', function () { setTimeout(function () { catchUpMeasurementPushes().catch(function () {}); }, 4000); });
 
 async function updatePortal(clientId) {
   var c = (db().clients || []).find(function(x){ return x.id === clientId; });
@@ -5272,7 +5291,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=77',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=78',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -8191,7 +8210,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=77';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=78';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
@@ -8504,6 +8523,9 @@ async function sweepChallengeSelfTests() {
           var prev = cx.measurements[it.key];
           if (!prev || rec.date >= (prev.date || 0)) cx.measurements[it.key] = rec;
           saveDb(data);
+          // v=78: send it back to the client's link too — a phone that loses its
+          // storage (H12) otherwise has no Day 1 baseline for its Day 28 report.
+          schedulePortalPush(c.id);
           got++;
           if (it._ackId != null) ack.push(it._ackId);
         } catch(e) { /* save failed: leave it queued for the next sweep */ }
