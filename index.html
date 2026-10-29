@@ -825,7 +825,7 @@ function dropDuplicateMealThumbs(week) {
 // v=72: meter tag. Every Worker call from the Coach OS carries its version and a
 // device id (?mv=c72&md=…), so the Worker's request log shows which pushes came
 // from the automatic update (stamped) vs Update Portal, and from which device.
-var MRS_COACH_V = 'v=79';
+var MRS_COACH_V = 'v=80';
 function coachDeviceId() {
   try {
     var d = localStorage.getItem('mrs_coach_device_v1');
@@ -5044,7 +5044,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=79';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=80';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -5111,7 +5111,9 @@ async function pushPortalProfile(clientId) {
 // touches the link update: it's recorded in mrs_db_mirror_v1 and nothing else.
 var DB_MIRROR_KEY = 'mrs_db_mirror_v1';
 function dbMirrorNote(v) { try { var n = JSON.parse(localStorage.getItem(DB_MIRROR_KEY) || '{}'); localStorage.setItem(DB_MIRROR_KEY, JSON.stringify(Object.assign(n, v))); } catch (e) {} }
-function dbDay(ms) { return new Date(ms).toISOString().slice(0, 10); }
+// v=80: the calendar day on THIS phone (was the UTC day — a program built after 5 PM
+// Pacific was stored as the next day, moving Week 1 a whole week for Saturday-evening builds).
+function dbDay(ms) { var d = new Date(ms); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 async function mirrorClientToDb(clientId) {
   var sb = sbClient(); if (!sb) return 'nolib';
   var sess = (await sb.auth.getSession()).data;
@@ -5132,11 +5134,13 @@ async function mirrorClientToDb(clientId) {
       level: p.level || null, freq: p.freq || null, goal: p.goal || null, flags: p.flags || [], block1: p.block1 || null, block2: p.block2 || null,
       block1_only: !!p.block1Only, partial: !!p.partial,
       start_date: /^\d{4}-\d{2}-\d{2}$/.test(p.startDay || '') ? p.startDay : (p.date ? dbDay(p.date) : null),
-      start_day_set: !!p.startDay, built_at: new Date(p.date || Date.now()).toISOString() }; });
+      start_day_set: !!p.startDay, built_at: new Date(p.date || Date.now()).toISOString(), deleted_at: null }; });
     if (rows.length) ck(await sb.from('programs').upsert(rows, { onConflict: 'id' }));
-    var have = (ck(await sb.from('programs').select('id').eq('client_id', c.id)).data) || [];
-    var gone = have.map(function (r) { return r.id; }).filter(function (id) { return !rows.some(function (r) { return r.id === id; }); });
-    if (gone.length) ck(await sb.from('programs').delete().in('id', gone));
+    // v=80 (Justin, Oct 28): a deleted program is HIDDEN in the database, never erased,
+    // so the workout logs filed under it stay in the client's history.
+    var have = (ck(await sb.from('programs').select('id,deleted_at').eq('client_id', c.id)).data) || [];
+    var gone = have.filter(function (r) { return !r.deleted_at && !rows.some(function (x) { return x.id === r.id; }); }).map(function (r) { return r.id; });
+    if (gone.length) ck(await sb.from('programs').update({ deleted_at: new Date().toISOString() }).in('id', gone));
     var act = rows.some(function (r) { return r.id === c.activeProgramId; }) ? c.activeProgramId : null;
     ck(await sb.from('clients').update({ active_program_id: act }).eq('id', c.id));
     var m = c.measurements && !Array.isArray(c.measurements) ? c.measurements : {};
@@ -5157,7 +5161,8 @@ async function mirrorClientToDb(clientId) {
 // (catches anything changed while signed out or offline).
 async function mirrorAllClientsDaily() {
   var note = {}; try { note = JSON.parse(localStorage.getItem(DB_MIRROR_KEY) || '{}'); } catch (e) {}
-  if (note.dailyOn === dbDay(Date.now()) || navigator.onLine === false) return 0;
+  // runs once a day, and once more on each new app version (v=80 rewrites the start days v=79 stored as UTC days)
+  if ((note.dailyOn === dbDay(Date.now()) && note.dailyV === MRS_COACH_V) || navigator.onLine === false) return 0;
   var n = 0;
   for (var c of (db().clients || [])) {
     if (!c.portalBlobId) continue;
@@ -5165,7 +5170,7 @@ async function mirrorAllClientsDaily() {
     if (r === 'signedout' || r === 'nolib') return 0;
     if (r === 'mirrored') n++;
   }
-  dbMirrorNote({ dailyOn: dbDay(Date.now()), dailyCount: n });
+  dbMirrorNote({ dailyOn: dbDay(Date.now()), dailyV: MRS_COACH_V, dailyCount: n });
   return n;
 }
 window.addEventListener('load', function () { setTimeout(function () { mirrorAllClientsDaily().catch(function () {}); }, 6000); });
@@ -5360,7 +5365,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=79',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=80',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -8279,7 +8284,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=79';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=80';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
