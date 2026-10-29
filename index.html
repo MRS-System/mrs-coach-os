@@ -825,7 +825,7 @@ function dropDuplicateMealThumbs(week) {
 // v=72: meter tag. Every Worker call from the Coach OS carries its version and a
 // device id (?mv=c72&md=…), so the Worker's request log shows which pushes came
 // from the automatic update (stamped) vs Update Portal, and from which device.
-var MRS_COACH_V = 'v=80';
+var MRS_COACH_V = 'v=81';
 function coachDeviceId() {
   try {
     var d = localStorage.getItem('mrs_coach_device_v1');
@@ -5044,7 +5044,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=80';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=81';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -5365,7 +5365,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=80',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=81',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -8021,6 +8021,26 @@ async function mirrorToCloud(data) {
   try { renderBackupBanner(); } catch(_) {}
 }
 
+// v=81: catch the cloud backup up whenever the app opens or comes back on screen.
+// It used to upload only after a save — an upload cut off by leaving the app (an
+// iPhone pauses a Home Screen app at once) had no second chance until the next
+// change: on Oct 28 it stayed 8 hours behind. Never overrides a pause (another
+// device's newer work needs a decision) or an upload already queued; once a minute.
+var _backupCatchupAt = 0;
+function backupCatchUp() {
+  try {
+    var last = cloudLastOk();
+    if (!last || _cloudBlocked || _mirrorTimer) return;       // never connected here / paused / upload queued
+    var local = dataSavedAt(db());
+    if (!local || (last.ok && last.at >= local)) return;     // already backed up
+    if (Date.now() - _backupCatchupAt < 60000) return;
+    _backupCatchupAt = Date.now();
+    mirrorToCloud(db());
+  } catch (e) {}
+}
+window.addEventListener('load', function () { setTimeout(backupCatchUp, 8000); });
+document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(backupCatchUp, 1500); });
+
 // v=77: the backup's state on the Dashboard, in red, whenever it is paused,
 // failing, or behind this phone's changes — it used to be a small dot only,
 // and a paused backup went unnoticed for 6 days.
@@ -8099,7 +8119,7 @@ async function cloudSignIn() {
 }
 
 async function cloudBackupNow() {
-  const msg = document.getElementById('sbMsg');
+  let msg = document.getElementById('sbMsg');
   // Pressing this button IS the deliberate override of the shrink guard.
   if (_cloudBlocked) {
     var why = _cloudBlocked.reason === 'newer'
@@ -8112,6 +8132,8 @@ async function cloudBackupNow() {
   if (msg) { msg.textContent = 'Backing up…'; msg.style.color = 'var(--dim)'; }
   await mirrorToCloud(db());
   const last = cloudLastOk();
+  // v=81: redraw the panel so its "Last copy saved" line shows this backup
+  if (last && last.ok) { try { openCloudModal(); } catch (_) {} msg = document.getElementById('sbMsg'); }
   if (msg) { msg.textContent = last && last.ok ? 'Backed up ✓ ' + last.clients + ' clients · ' + Math.round((last.bytes||0)/1024) + ' KB'
                                                : 'Backup failed — are you signed in?';
              msg.style.color = last && last.ok ? 'var(--green-br)' : 'var(--red)'; }
@@ -8284,7 +8306,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=80';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=81';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
