@@ -727,6 +727,7 @@ function saveDb(data) {
     // comparison is what offered a 6-day-old copy over newer data (Oct 26).
     if (data && typeof data === 'object') { data._savedAt = Date.now(); try { data._savedBy = coachDeviceId(); } catch (_) {} }
     localStorage.setItem(DB_KEY, JSON.stringify(data));
+    if (_saveFailedAt) { _saveFailedAt = 0; try { renderStorageBanner(); } catch (_) {} }   // v=84: a save worked again → clear "A SAVE FAILED"
     // Cloud mirror — strictly downstream of a successful local save, and it can
     // never throw into this path. localStorage remains the source of truth.
     try { queueCloudMirror(data); } catch(_) {}
@@ -878,7 +879,7 @@ async function offloadOldPhotos(force) {
       if (m.photoPath !== path) { m.photoPath = path; changed = true; }
       if (m.thumb) { freed += m.thumb.length; delete m.thumb; changed = true; }
     });
-    if (changed) saveDb(data);
+    if (changed) { saveDb(data); flushAuthMem(); }
     if (moved || failed || freed) console.log('v=83 photos: ' + moved + ' moved to the cloud photo store, ' + failed + ' failed (kept on phone), ' + freed + ' chars freed');
   } catch (e) { console.warn('photo move skipped (photos stay on the phone):', e && e.message); }
   finally { _photoOffloadBusy = false; try { renderStorageBanner(); } catch (_) {} }
@@ -905,7 +906,7 @@ async function fillCloudPhotos(root) {
 // v=72: meter tag. Every Worker call from the Coach OS carries its version and a
 // device id (?mv=c72&md=…), so the Worker's request log shows which pushes came
 // from the automatic update (stamped) vs Update Portal, and from which device.
-var MRS_COACH_V = 'v=83';
+var MRS_COACH_V = 'v=84';
 function coachDeviceId() {
   try {
     var d = localStorage.getItem('mrs_coach_device_v1');
@@ -5129,7 +5130,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=83';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=84';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -5451,7 +5452,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=83',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=84',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -7985,13 +7986,25 @@ const SB_URL = 'https://zwmwsgbrstaxelddmfkq.supabase.co';
 const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3bXdzZ2Jyc3RheGVsZGRtZmtxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyMTI5MTYsImV4cCI6MjEwNTc4ODkxNn0.zEzM8K5DCV8EF9PLwuEN14-a3kok2isMaID4XpH4juQ';
 const SB_LAST = 'mrs_cloud_last_v1';
 
+// v=84: the login's storage keeps working on a FULL phone. Nov 10: the phone hit
+// 100%; the hourly login renewal must save a new token, could not, and so the login
+// stopped — which stopped the cloud backup AND the v=83 photo move, the one thing that
+// would have freed the space. Now a token that can't be saved is held in memory and
+// saved as soon as there is room again (flushAuthMem, after the photo move frees space).
+var _authMem = {};
+var authStore = {
+  getItem: function (k) { if (Object.prototype.hasOwnProperty.call(_authMem, k)) return _authMem[k]; try { return localStorage.getItem(k); } catch (e) { return null; } },
+  setItem: function (k, v) { try { localStorage.setItem(k, v); delete _authMem[k]; } catch (e) { _authMem[k] = v; } },
+  removeItem: function (k) { delete _authMem[k]; try { localStorage.removeItem(k); } catch (e) {} }
+};
+function flushAuthMem() { Object.keys(_authMem).forEach(function (k) { try { localStorage.setItem(k, _authMem[k]); delete _authMem[k]; } catch (e) {} }); }
 let _sb = null;
 function sbClient() {
   if (_sb) return _sb;
   try {
     if (!window.supabase || !window.supabase.createClient) return null;
     _sb = window.supabase.createClient(SB_URL, SB_ANON, {
-      auth: { persistSession: true, autoRefreshToken: true, storageKey: 'mrs_sb_auth_v1' }
+      auth: { persistSession: true, autoRefreshToken: true, storageKey: 'mrs_sb_auth_v1', storage: authStore }
     });
     return _sb;
   } catch (e) { return null; }
@@ -8423,7 +8436,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=83';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=84';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
