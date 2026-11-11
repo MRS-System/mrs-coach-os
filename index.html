@@ -822,10 +822,90 @@ function dropDuplicateMealThumbs(week) {
   } catch (e) { console.warn('photo de-dupe skipped:', e && e.message); }
 })();
 
+// v=83: meal photos older than 14 days move to the private cloud photo store
+// (Supabase Storage 'meal-photos', <coach>/<client>/<meal ts>.<ext> — the same
+// place and names the Oct 28 import used). Photos were 83% of the coach data and
+// the phone hit 99% (Nov 9). A photo leaves the phone ONLY after the store
+// confirmed the upload; the meal keeps `photoPath` and the photo is shown from the
+// store when its day is opened. Uploads happen first; the result is then applied to
+// a FRESH read of the data in one step, so nothing saved meanwhile is overwritten.
+// Needs the Cloud Backup login; without it nothing happens. At most every 30 min.
+var PHOTO_KEEP_DAYS = 14, _photoOffloadAt = 0, _photoOffloadBusy = false;
+function photoFromDataUrl(u) {
+  var m = /^data:(image\/(jpeg|png|webp));base64,(.+)$/.exec(u || '');
+  if (!m) return null;
+  var bin = atob(m[3]), a = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+  return { blob: new Blob([a], { type: m[1] }), type: m[1], ext: m[2] === 'jpeg' ? 'jpg' : m[2] };
+}
+function eachMeal(data, fn) {   // every stored meal: meal scans + the check-in copies (v=73 already dropped their duplicate photo)
+  (data.clients || []).forEach(function (c) { (c.weeklyData || []).forEach(function (w) {
+    Object.keys(w.mealScans || {}).forEach(function (d) { (w.mealScans[d] || []).forEach(function (m) { if (m) fn(c, m, d); }); });
+    Object.keys(w.checkins || {}).forEach(function (d) { ((w.checkins[d] || {}).meals || []).forEach(function (m) { if (m) fn(c, m, d); }); });
+  }); });
+}
+async function offloadOldPhotos(force) {
+  if (_photoOffloadBusy || (!force && Date.now() - _photoOffloadAt < 30 * 60000)) return null;
+  _photoOffloadBusy = true; _photoOffloadAt = Date.now();
+  var moved = 0, failed = 0, freed = 0;
+  try {
+    var sb = sbClient(); if (!sb) return null;
+    var got = await sb.auth.getSession(), user = got && got.data && got.data.session && got.data.session.user;
+    if (!user) return null;
+    var cutoff = Date.now() - PHOTO_KEEP_DAYS * 864e5, jobs = {}, stored = {};
+    eachMeal(db(), function (c, m, d) {
+      if (!m.thumb || m.photoPath || m.ts == null) return;
+      var when = m.ts || Date.parse(d + 'T12:00');
+      if (!(when < cutoff)) return;
+      var key = c.id + '|' + m.ts;
+      if (!jobs[key]) jobs[key] = { client: c.id, ts: m.ts, thumb: m.thumb };
+    });
+    for (var key in jobs) {
+      var j = jobs[key], p = photoFromDataUrl(j.thumb);
+      if (!p) continue;
+      var path = user.id + '/' + j.client + '/' + j.ts + '.' + p.ext;
+      var up = await sb.storage.from('meal-photos').upload(path, p.blob, { upsert: true, contentType: p.type });
+      if (up.error) { failed++; continue; }
+      stored[key] = path; moved++;
+    }
+    var data = db(), changed = false;                  // fresh copy: apply in one synchronous step
+    eachMeal(data, function (c, m) { if (m.photoPath && m.ts != null) stored[c.id + '|' + m.ts] = stored[c.id + '|' + m.ts] || m.photoPath; });
+    // every copy of a moved meal is marked — also the check-in copy whose photo v=73 had
+    // already dropped, or a client re-sending the week would bring the photo back there
+    eachMeal(data, function (c, m) {
+      var path = m.ts != null && stored[c.id + '|' + m.ts];
+      if (!path) return;
+      if (m.photoPath !== path) { m.photoPath = path; changed = true; }
+      if (m.thumb) { freed += m.thumb.length; delete m.thumb; changed = true; }
+    });
+    if (changed) saveDb(data);
+    if (moved || failed || freed) console.log('v=83 photos: ' + moved + ' moved to the cloud photo store, ' + failed + ' failed (kept on phone), ' + freed + ' chars freed');
+  } catch (e) { console.warn('photo move skipped (photos stay on the phone):', e && e.message); }
+  finally { _photoOffloadBusy = false; try { renderStorageBanner(); } catch (_) {} }
+  return { moved: moved, failed: failed, freed: freed };
+}
+window.addEventListener('load', function () { setTimeout(function () { offloadOldPhotos(); }, 12000); });
+document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(function () { offloadOldPhotos(); }, 4000); });
+// Shown from the store when a meal day is opened (links last an hour; kept for the session).
+var _photoUrls = {};
+async function fillCloudPhotos(root) {
+  try {
+    var imgs = Array.prototype.slice.call((root || document).querySelectorAll('img[data-photo-path]')).filter(function (i) { return !i.getAttribute('src'); });
+    if (!imgs.length) return;
+    var need = imgs.map(function (i) { return i.getAttribute('data-photo-path'); }).filter(function (p, k, all) { return !_photoUrls[p] && all.indexOf(p) === k; });
+    if (need.length) {
+      var sb = sbClient(); if (!sb) return;
+      var r = await sb.storage.from('meal-photos').createSignedUrls(need, 3600);
+      ((r && r.data) || []).forEach(function (x) { if (x && x.signedUrl && x.path) _photoUrls[x.path] = x.signedUrl; });
+    }
+    imgs.forEach(function (i) { var u = _photoUrls[i.getAttribute('data-photo-path')]; if (u) i.setAttribute('src', u); });
+  } catch (e) {}
+}
+
 // v=72: meter tag. Every Worker call from the Coach OS carries its version and a
 // device id (?mv=c72&md=…), so the Worker's request log shows which pushes came
 // from the automatic update (stamped) vs Update Portal, and from which device.
-var MRS_COACH_V = 'v=82';
+var MRS_COACH_V = 'v=83';
 function coachDeviceId() {
   try {
     var d = localStorage.getItem('mrs_coach_device_v1');
@@ -1084,7 +1164,7 @@ function weekFingerprint(w) {
     if (Array.isArray(v)) return v.map(norm);
     if (v && typeof v === 'object') {
       const o = {};
-      Object.keys(v).sort().forEach(k => { if (k !== 'thumb' && v[k] != null) o[k] = norm(v[k]); });
+      Object.keys(v).sort().forEach(k => { if (k !== 'thumb' && k !== 'photoPath' && v[k] != null) o[k] = norm(v[k]); });
       return o;
     }
     return v;
@@ -1108,8 +1188,13 @@ function mergeWeekCopies(prev, data) {
       const k = m.ts != null ? 't' + m.ts : JSON.stringify(m);
       const cur = by[k];
       if (!cur) by[k] = Object.assign({}, m);
-      else if (!cur.thumb && m.thumb) cur.thumb = m.thumb;
+      else {
+        if (!cur.photoPath && m.photoPath) cur.photoPath = m.photoPath;
+        if (!cur.thumb && m.thumb) cur.thumb = m.thumb;
+      }
     });
+    // v=83: a photo already in the cloud photo store is not copied back onto the phone
+    Object.values(by).forEach(m => { if (m.photoPath && m.thumb) delete m.thumb; });
     return Object.values(by).sort((x, y) => (x.ts || 0) - (y.ts || 0));
   };
   const checkins = {};
@@ -5044,7 +5129,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=82';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=83';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -5366,7 +5451,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=82',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=83',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5549,6 +5634,8 @@ function renderCoachMealHistory(mealScans, idBase) {
       const macros = m.macros || {};
       const thumb = m.thumb
         ? '<img src="' + m.thumb + '" alt="meal" style="width:46px;height:46px;border-radius:8px;object-fit:cover;flex-shrink:0;border:1px solid var(--border)">'
+        : m.photoPath   // v=83: photo kept in the cloud photo store, loaded when the day opens
+        ? '<img data-photo-path="' + esc(m.photoPath) + '" alt="meal" style="width:46px;height:46px;border-radius:8px;object-fit:cover;flex-shrink:0;border:1px solid var(--border);background:var(--black-4)">'
         : '<div style="width:46px;height:46px;border-radius:8px;flex-shrink:0;background:var(--black-4);border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--dim);font-size:8px;gap:1px"><span style="font-size:14px">🍽️</span><span>No photo</span></div>';
       const macroLine = [
         macros.protein != null ? macros.protein + 'g P' : '',
@@ -5627,6 +5714,7 @@ function toggleCoachMealDay(dayId) {
   const opening = detail.style.display === 'none';
   detail.style.display = opening ? 'block' : 'none';
   if (caret) caret.textContent = opening ? '▾' : '▸';
+  if (opening) fillCloudPhotos(detail);
 }
 
 // The Check-ins card: one row per received week (newest first), each with a
@@ -6321,7 +6409,7 @@ function importData() {
         // with "Could not read file". Keep one copy of each photo (same rule as
         // v=73: only where the identical photo is in that week's meal scans).
         parsed.clients.forEach(function (c) { (c.weeklyData || []).forEach(dropDuplicateMealThumbs); });
-        try { saveDb(parsed); }
+        try { saveDb(parsed); setTimeout(function () { offloadOldPhotos(true); }, 2000); }
         catch (saveErr) {
           // Nothing was replaced: the phone still holds the data it had.
           _saveFailedAt = 0; try { renderStorageBanner(); } catch (_) {}
@@ -7909,8 +7997,15 @@ function sbClient() {
   } catch (e) { return null; }
 }
 
-function cloudLastOk() { try { return JSON.parse(localStorage.getItem(SB_LAST) || 'null'); } catch(e) { return null; } }
-function setCloudLast(v) { try { localStorage.setItem(SB_LAST, JSON.stringify(v)); } catch(e) {} }
+// v=83: the "last backup" note is also kept in memory. On a full phone (Nov 9) the
+// note could not be saved, so the Dashboard kept saying "not in your cloud backup
+// yet" although the backup had just succeeded.
+var _cloudLastMem = null;
+function cloudLastOk() {
+  var s = null; try { s = JSON.parse(localStorage.getItem(SB_LAST) || 'null'); } catch(e) {}
+  return _cloudLastMem && (!s || (_cloudLastMem.at || 0) >= (s.at || 0)) ? _cloudLastMem : s;
+}
+function setCloudLast(v) { _cloudLastMem = v; try { localStorage.setItem(SB_LAST, JSON.stringify(v)); } catch(e) {} }
 
 function setCloudDot(state, label, title) {
   const dot = document.getElementById('cloudDot');
@@ -7982,7 +8077,7 @@ async function cloudPull(apply) {
     .select('data,client_count,size_bytes,updated_at').eq('owner', sess.session.user.id).maybeSingle();
   if (error) throw error;
   if (!data || !data.data) return null;
-  if (apply) { _cloudSynced = true; _cloudBlocked = null; data.data._pulledFrom = dataSavedAt(data.data) || Date.parse(data.updated_at) || Date.now(); saveDb(data.data); }
+  if (apply) { _cloudSynced = true; _cloudBlocked = null; data.data._pulledFrom = dataSavedAt(data.data) || Date.parse(data.updated_at) || Date.now(); saveDb(data.data); setTimeout(function () { offloadOldPhotos(true); }, 2000); }
   return data;
 }
 
@@ -8328,7 +8423,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=82';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=83';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
