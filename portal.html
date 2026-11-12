@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=85 -->
+<!-- portal cache-buster v=86 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2068,7 +2068,7 @@ tagScanRequests();
 // phone's sync device id (?mv=p72&md=…), so the Worker's request log shows which
 // phones are on old code and which link each one opens. Read-only: the device id
 // is never created here (the sync code creates it on the first send).
-var MRS_PORTAL_V = 'v=85';
+var MRS_PORTAL_V = 'v=86';
 function meterTagUrl(url) {
   if (typeof url !== 'string' || url.indexOf('mrs-nutrireader-worker.mrs-system.workers.dev/') === -1 || url.indexOf('mv=') !== -1) return url;
   var dev = '';
@@ -4695,8 +4695,8 @@ document.addEventListener('visibilitychange', function () {
 //   off    → link only (as before)
 //   shadow → link as before; the database answer is compared quietly and the
 //            result ("match" / which fields differ) is reported to the request log
-//   on     → database first (4 s limit), the link if it doesn't answer; the link
-//            is still compared in the background
+//   on     → database and link together: agree → database shown; differ → link shown
+//            (v=86) and the difference reported; either fails → the other
 // The mode is saved by the update check (5 s after open, then at most every 30 min);
 // a change takes effect on the next open.
 var SB_URL_P = 'https://zwmwsgbrstaxelddmfkq.supabase.co';
@@ -4813,12 +4813,20 @@ function loadSharedProfileAs(id, mode) {
   // re-resolve the profile on launch. Re-fetching on each load is intentional —
   // it is also the channel by which a coach-updated program reaches the client.
   if (mode.on) {
-    fetchDbProfile(id, 4000).then(function (dbProf) {
-      applyProfileText(JSON.stringify(dbProf));
-      fetchLinkProfile(id).then(function (t) { reportShadow(profileDiffs(JSON.parse(t), dbProf), 'db'); }).catch(function () {});
-    }).catch(function () {
-      reportShadow(null, 'db');
-      fetchLinkProfile(id).then(applyProfileText).catch(function () { showToast('Couldn\'t open your profile link. Ask your coach to re-send it.'); });
+    // v=86: database AND link at the same time. While the link is still the coach's real
+    // copy, the database is only as fresh as the coach app's sync (Nov 10: a full phone
+    // stopped the sync for ~4 h). So: they agree → the database copy is shown; they differ
+    // → the LINK is shown and the difference reported; either one fails → the other.
+    var linkP = fetchLinkProfile(id).then(function (t) { JSON.parse(t); return t; }).catch(function () { return null; });
+    var dbP2 = fetchDbProfile(id, 6000).catch(function () { return null; });
+    Promise.all([dbP2, linkP]).then(function (r) {
+      var dbProf = r[0], linkText = r[1];
+      if (!dbProf && !linkText) { reportShadow(null, 'db'); showToast('Couldn\'t open your profile link. Ask your coach to re-send it.'); return; }
+      if (!dbProf) { reportShadow(null, 'db'); applyProfileText(linkText); return; }
+      if (!linkText) { applyProfileText(JSON.stringify(dbProf)); return; }
+      var diffs = profileDiffs(JSON.parse(linkText), dbProf);
+      reportShadow(diffs, diffs.length ? 'link-kept' : 'db');
+      applyProfileText(diffs.length ? linkText : JSON.stringify(dbProf));
     });
     return;
   }
