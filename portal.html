@@ -1,14 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- portal cache-buster v=86 -->
+<!-- portal cache-buster v=87 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#080806">
 <title>MRS™ · My Portal</title>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
 <!-- ZXing barcode reader (packaged-food precision lane). First external script; loads async, scanner degrades gracefully to photo if unavailable. -->
 <script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
 <style>
@@ -2068,7 +2068,7 @@ tagScanRequests();
 // phone's sync device id (?mv=p72&md=…), so the Worker's request log shows which
 // phones are on old code and which link each one opens. Read-only: the device id
 // is never created here (the sync code creates it on the first send).
-var MRS_PORTAL_V = 'v=86';
+var MRS_PORTAL_V = 'v=87';
 function meterTagUrl(url) {
   if (typeof url !== 'string' || url.indexOf('mrs-nutrireader-worker.mrs-system.workers.dev/') === -1 || url.indexOf('mv=') !== -1) return url;
   var dev = '';
@@ -4775,7 +4775,8 @@ function profileDiffs(a, b) {
   ['id', 'name', 'avatar', 'level', 'freq', 'goal', 'flags', 'cohort', 'clientType', 'createdAt', 'intake', 'activeProgramId'].forEach(function (f) {
     if (!(empty(a[f]) && empty(b[f])) && canon(a[f]) !== canon(b[f])) out.push(f); });
   if (!(empty(a.measurements) && empty(b.measurements)) && canon(a.measurements) !== canon(b.measurements)) out.push('measurements');
-  if (!(empty(a.challenge) && empty(b.challenge)) && canon(a.challenge) !== canon(b.challenge)) out.push('challenge');
+  var noNote = function (c) { if (!c || typeof c !== 'object') return c; var o = Object.assign({}, c); delete o.coachNote; return o; };   // v=87: coach's line rides the link only
+  if (!(empty(a.challenge) && empty(b.challenge)) && canon(noNote(a.challenge)) !== canon(noNote(b.challenge))) out.push('challenge');
   var pa = {}, pb = {}; (a.programs || []).forEach(function (p) { pa[p.id] = p; }); (b.programs || []).forEach(function (p) { pb[p.id] = p; });
   Object.keys(pa).concat(Object.keys(pb)).filter(function (id, i, all) { return all.indexOf(id) === i; }).forEach(function (id) {
     if (!pa[id] || !pb[id]) { out.push('program:' + id + (pa[id] ? ':missing' : ':extra')); return; }
@@ -4935,7 +4936,7 @@ const SELFTEST_FIELDS = [
   { key:'pushups', label:'Max push-ups',       unit:'unbroken', short:'', better:'up', hint:'Full range, chest to fist height. Stop when form breaks.' },
   { key:'plank',   label:'Plank hold',         unit:'seconds', short:'sec', better:'up', hint:'Hold straight. Stop when your hips drop.' },
 ];
-var _selfTestLater = false, _selfTestPick = {};
+var _selfTestLater = false, _selfTestPick = {}, _selfTestOddOk = null;
 
 function readSelfTests() {
   try { return JSON.parse(localStorage.getItem(SELFTEST_STORE) || '{}') || {}; } catch(e) { return {}; }
@@ -5012,7 +5013,7 @@ function renderChallengeSelfTest() {
     }).join('');
     div.innerHTML = title('🏆 Your Results · Day 1 → Day 28')
       + '<div style="font-size:12px;color:var(--dim2);line-height:1.6;margin:5px 0 8px">' + (d1 ? 'Green is a win. Weight is shown for reference only — the scale is one number, not the story.' : 'No Day 1 baseline was recorded, so there’s nothing to compare — these are your new starting numbers.') + '</div>'
-      + rows;
+      + rows + (d1 ? CARD_BTN : '');
   }
   var dayCard = document.getElementById('challengeDayCard');
   if (dayCard && dayCard.parentNode === host) host.insertBefore(div, dayCard.nextSibling);
@@ -5031,6 +5032,7 @@ function laterSelfTest() { _selfTestLater = true; renderChallengeSelfTest(); }
 
 function openSelfTestSheet(kind) {
   closeSelfTestSheet();
+  _selfTestOddOk = null;
   _selfTestPick = {};
   var st = readSelfTests(), pl = kind === 'day28' ? selfTestProtocolLine(st.challenge_selftest_day1) : '';
   var opt = function(group, val, label){ return '<button type="button" class="yn-btn" data-g="' + group + '" data-v="' + val + '" onclick="pickSelfTestOpt(this)">' + label + '</button>'; };
@@ -5077,12 +5079,27 @@ function saveSelfTest(kind) {
     if (!_selfTestPick.fasted) missing.push('eaten yet'); else rec.fasted = _selfTestPick.fasted;
   }
   if (missing.length) { document.getElementById('selfTestErr').textContent = 'Still needed: ' + missing.join(', ') + '.'; return; }
+  // v=87: a number that looks impossible next to Day 1 (an extra zero, minutes for seconds,
+  // cm for inches) gets one "is that right?" before it's saved — these numbers end up on a public card
+  var d1x = kind === 'day28' ? readSelfTests().challenge_selftest_day1 : null;
+  if (d1x) {
+    var odd = SELFTEST_FIELDS.filter(function (f) { var a = parseFloat(d1x[f.key]), z = parseFloat(rec[f.key]); return !isNaN(a) && !isNaN(z) && !cardPlausible(f.key, a, z); });
+    var sig = odd.map(function (f) { return f.key + '=' + rec[f.key]; }).join('|');
+    if (odd.length && _selfTestOddOk !== sig) {
+      _selfTestOddOk = sig;
+      var u = function (f) { return f.short !== undefined ? f.short : f.unit; };
+      document.getElementById('selfTestErr').innerHTML = 'Double-check: ' + odd.map(function (f) { return '<b>' + f.label + ' ' + selfTestEsc(rec[f.key]) + (u(f) ? ' ' + u(f) : '') + '</b> (Day 1: ' + selfTestEsc(d1x[f.key]) + ')'; }).join(', ')
+        + '. Fix it, or tap <b>Save</b> again if it’s right.' + (odd.some(function (f) { return f.key === 'plank'; }) ? ' Plank is in seconds.' : '') + (odd.some(function (f) { return f.key === 'waist'; }) ? ' Waist is in inches.' : '');
+      return;
+    }
+  }
   var st = readSelfTests(); st[key] = rec; writeSelfTests(st);
   closeSelfTestSheet();
   renderChallengeSelfTest();
   showToast(kind === 'day1' ? 'Baseline saved ✓ See you on Day 28.' : 'Retest saved ✓ Look at what you did.');
   var sp = document.getElementById('screen-progress'); if (sp && sp.classList.contains('active')) renderProgress();
   sendSelfTests();
+  if (kind === 'day28' && st.challenge_selftest_day1) setTimeout(openChallengeCard, 600);   // v=87: the moment they finish
 }
 
 // Deliver saved results to the coach; retried on every open until accepted.
@@ -5192,13 +5209,163 @@ function renderChallengeProgress(el) {
 
   // 4. Your Retest (Day 28) + the comparison
   var retBody;
-  if (d28) retBody = (d1 ? '<div style="font-size:12px;color:var(--dim2);margin-bottom:4px;line-height:1.5">Green is a win. Weight is shown for reference only.</div>' : '') + selfTestRowsHtml(d1, d28);
+  if (d28) retBody = (d1 ? '<div style="font-size:12px;color:var(--dim2);margin-bottom:4px;line-height:1.5">Green is a win. Weight is shown for reference only.</div>' : '') + selfTestRowsHtml(d1, d28) + (d1 ? CARD_BTN : '');
   else if (d !== null && d >= total) retBody = '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6">It’s retest time.' + (d1 && d1.timeOfDay ? ' Match how you measured on Day 1.' : '') + '</div>' + btn('Do my retest', "openSelfTestSheet('day28')");
   else retBody = '<div style="font-size:12.5px;color:var(--dim2);line-height:1.6">Unlocks on Day 28' + (ch.startDate ? ' (' + ymd(total - 1) + ')' : '') + '.</div>';
   html += card('🏁 Your Retest · Day 28', retBody);
 
   el.innerHTML = html;
 }
+
+// ── 28 Day Challenge: "Challenge Complete" share card (v=87, NEW, non-protected) ──
+// After the Day 28 retest: one image, sized for an iPhone screenshot / Instagram story
+// (1080×1920), that a participant is proud to post. Rules (Justin, Nov 13):
+//  • headline = their single biggest win; only IMPROVED markers are shown (a marker that
+//    didn't improve is left off, never shown in red); weight never appears;
+//  • consistency shown only when it's a good story (≥14 of 28 days, or weeks trending up);
+//  • the coach's own line for that participant (challenge.coachNote), if written;
+//  • next challenge (Sun Jan 3) + sign up now, at the bottom.
+var CARD_NEXT = 'NEXT CHALLENGE STARTS SUN JAN 3';
+var CARD_CTA = 'Sign up now · mrs-system.github.io/rebuilt';
+var CARD_FIELDS = {
+  pushups: { big: function (d) { return '+' + d + ' PUSH-UPS'; }, row: 'Push-ups', unit: '' },
+  plank:   { big: function (d) { return '+' + d + ' SEC PLANK'; }, row: 'Plank', unit: ' sec' },
+  waist:   { big: function (d) { return '−' + d + '" WAIST'; }, row: 'Waist', unit: '"' },
+  rhr:     { big: function (d) { return '−' + d + ' BPM RESTING HR'; }, row: 'Resting heart rate', unit: ' bpm' }
+};
+// Realistic limits for a 28-day change (typos, extra zeros, minutes-for-seconds, cm-for-inches).
+// Used by the card (a change outside them is never shown) and by the retest screen (asks "is that right?").
+function cardPlausible(k, a, z) {
+  if (k === 'pushups') return z >= 0 && z <= a * 3 + 15 && z >= a / 3 - 2;
+  if (k === 'plank') return z >= 5 && z <= a * 4 + 60 && z >= a / 4;
+  if (k === 'waist') return z >= 20 && z <= 70 && Math.abs(z - a) <= 4;
+  if (k === 'rhr') return z >= 35 && z <= 120 && Math.abs(z - a) <= 20;
+  return true;
+}
+// Pure: the card's content from the numbers alone. Copied WORD FOR WORD into the coach
+// app (index.html) — tests/pipes/e2e-challengecard checks the two stay identical.
+function challengeCardFrom(name, d1, d28, daysIn, totalDays, weekScores, note) {
+  if (!d28) return null;
+  var keys = { pushups: 'up', plank: 'up', waist: 'down', rhr: 'down' }, wins = [];
+  Object.keys(keys).forEach(function (k) {
+    if (!d1) return;
+    var a = parseFloat(d1[k]), z = parseFloat(d28[k]);
+    if (isNaN(a) || isNaN(z)) return;
+    var d = Math.round(Math.abs(z - a) * 10) / 10, won = keys[k] === 'up' ? z > a : z < a;
+    if (!won || !d || !cardPlausible(k, a, z)) return;        // only real improvements; weight is never read
+    wins.push({ key: k, a: a, z: z, d: d, rel: a > 0 ? d / a : d });
+  });
+  wins.sort(function (x, y) { return y.rel - x.rel; });
+  var lines = [];
+  if (daysIn >= 14) lines.push('🔥 ' + daysIn + ' of ' + totalDays + ' days checked in');
+  if (weekScores && weekScores.length) { var best = Math.max.apply(null, weekScores); if (best >= 21) lines.push('📈 Best week: ' + best + '/35'); }   // only a number to be proud of
+  return { name: String(String(name || '').trim().split(/\s+/)[0] || '').toUpperCase(), top: wins[0] || null, rest: wins.slice(1), lines: lines, note: String(note || '').trim().slice(0, 160) };
+}
+function challengeCardModel() {
+  var info = readChallengeInfo(); if (!info || !info.challenge) return null;
+  var ch = info.challenge, st = readSelfTests(), d1 = st.challenge_selftest_day1, d28 = st.challenge_selftest_day28;
+  if (!d28) return null;
+  var cp = portalDb().clientProfile || {}, days = 0, weeks = [], total = ch.days || 28;
+  // consistency, from this phone's own check-ins over the 28 days
+  if (ch.startDate) {
+    var p = ch.startDate.split('-').map(Number), pdb = portalDb();
+    for (var i = 0; i < total; i++) {
+      var x = new Date(p[0], p[1] - 1, p[2] + i), k = x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0');
+      var ci = (pdb.checkins || {})[k];
+      if (ci && Object.keys(ci).some(function (key) { var v = ci[key]; return key !== 'ts' && v != null && v !== false && !(Array.isArray(v) && !v.length); })) days++;
+    }
+    var startMs = new Date(p[0], p[1] - 1, p[2]).getTime(), endMs = startMs + (total - 1) * 864e5;
+    for (var off = 0; off >= -8; off--) {
+      var wd = getWeekDays(off), ws = new Date(wd[0].key + 'T00:00:00').getTime(), we = new Date(wd[6].key + 'T00:00:00').getTime();
+      if (we < startMs || ws > endMs) continue;
+      weeks.unshift(calcWeekScore(off).total);
+    }
+  }
+  return challengeCardFrom(cp.name, d1, d28, days, total, weeks, ch.coachNote);
+}
+function cardWrap(ctx, text, maxW) {
+  var words = String(text).split(/\s+/), out = [], line = '';
+  words.forEach(function (w) { var t = line ? line + ' ' + w : w; if (ctx.measureText(t).width > maxW && line) { out.push(line); line = w; } else line = t; });
+  if (line) out.push(line); return out;
+}
+async function drawChallengeCard(m) {
+  try { await Promise.all(['72px "Bebas Neue"', '500 40px Barlow', '600 40px Barlow', 'italic 40px Barlow'].map(function (f) { return document.fonts.load(f); })); } catch (e) {}
+  var W = 1080, H = 1920, c = document.createElement('canvas'); c.width = W; c.height = H;
+  var x = c.getContext('2d'), gold = '#C9A227', white = '#F5F2E8', dim = '#A8A496';
+  var g = x.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#15140f'); g.addColorStop(1, '#070706');
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
+  x.strokeStyle = 'rgba(201,162,39,.55)'; x.lineWidth = 6; x.strokeRect(36, 36, W - 72, H - 72);
+  x.textAlign = 'center';
+  x.fillStyle = gold; x.font = '48px "Bebas Neue"'; x.fillText('METABOLIC REBUILD SYSTEM™', W / 2, 170);
+  x.fillStyle = white; x.font = '64px "Bebas Neue"'; x.fillText('28 DAY CHALLENGE · ✓ COMPLETE', W / 2, 250);
+  x.fillStyle = gold; x.fillRect(W / 2 - 90, 290, 180, 5);
+  // the middle: a list of pieces, each { h, draw(y) } — measured first, then centred between header and footer
+  var items = [], gap = function (h) { items.push({ h: h, draw: function () {} }); };
+  items.push({ h: 170, draw: function (y) { x.textAlign = 'center'; x.fillStyle = white; x.font = '150px "Bebas Neue"'; x.fillText(m.name || 'CHALLENGE', W / 2, y + 130); } });
+  gap(40);
+  if (m.top) {
+    var big = CARD_FIELDS[m.top.key].big(m.top.d), size = 190;
+    x.font = size + 'px "Bebas Neue"'; while (x.measureText(big).width > W - 160 && size > 90) { size -= 8; x.font = size + 'px "Bebas Neue"'; }
+    items.push({ h: size * 0.85, draw: function (y) { x.textAlign = 'center'; x.fillStyle = gold; x.font = size + 'px "Bebas Neue"'; x.fillText(big, W / 2, y + size * 0.8); } });
+    items.push({ h: 80, draw: function (y) { var u = CARD_FIELDS[m.top.key].unit; x.textAlign = 'center'; x.fillStyle = dim; x.font = '500 42px Barlow'; x.fillText(m.top.a + u + '  →  ' + m.top.z + u + '  in 28 days', W / 2, y + 60); } });
+  } else {
+    items.push({ h: 170, draw: function (y) { x.textAlign = 'center'; x.fillStyle = gold; x.font = '180px "Bebas Neue"'; x.fillText('28 DAYS. DONE.', W / 2, y + 155); } });
+    items.push({ h: 80, draw: function (y) { x.textAlign = 'center'; x.fillStyle = dim; x.font = '500 42px Barlow'; x.fillText('Started it. Finished it.', W / 2, y + 60); } });
+  }
+  if (m.rest.length) {
+    gap(30);
+    m.rest.forEach(function (w) {
+      items.push({ h: 92, draw: function (y) { var f = CARD_FIELDS[w.key], b = y + 62;
+        x.textAlign = 'left'; x.fillStyle = white; x.font = '600 46px Barlow'; x.fillText(f.row, 120, b);
+        x.textAlign = 'right'; x.font = '500 46px Barlow'; x.fillText(w.a + f.unit + ' → ' + w.z + f.unit, W - 190, b);
+        x.fillStyle = gold; x.font = '600 50px Barlow'; x.fillText('✓', W - 120, b);
+        x.fillStyle = 'rgba(255,255,255,.08)'; x.fillRect(120, y + 90, W - 240, 2); } });
+    });
+  }
+  if (m.lines.length) { gap(30); m.lines.forEach(function (l) { items.push({ h: 74, draw: function (y) { x.textAlign = 'center'; x.fillStyle = white; x.font = '500 44px Barlow'; x.fillText(l, W / 2, y + 54); } }); }); }
+  if (m.note) {
+    x.font = 'italic 46px Barlow'; var ls = cardWrap(x, '“' + m.note + '”', W - 220).slice(0, 4);
+    gap(50);
+    items.push({ h: ls.length * 62 + 70, draw: function (y) { x.textAlign = 'center'; x.fillStyle = white; x.font = 'italic 46px Barlow';
+      ls.forEach(function (l, i) { x.fillText(l, W / 2, y + 50 + i * 62); });
+      x.fillStyle = gold; x.font = '600 40px Barlow'; x.fillText('— Coach Justin', W / 2, y + 50 + ls.length * 62 + 6); } });
+  }
+  var top = 330, bottom = H - 330, total = items.reduce(function (t, i) { return t + i.h; }, 0);
+  var y = top + Math.max(0, (bottom - top - total) / 2);
+  items.forEach(function (i) { i.draw(y); y += i.h; });
+  x.textAlign = 'center';
+  x.fillStyle = 'rgba(201,162,39,.14)'; x.fillRect(39, H - 300, W - 78, 261);
+  x.fillStyle = gold; x.font = '76px "Bebas Neue"'; x.fillText(CARD_NEXT, W / 2, H - 190);
+  x.fillStyle = white; x.font = '500 38px Barlow'; x.fillText(CARD_CTA, W / 2, H - 115);
+  return c;
+}
+async function openChallengeCard() {
+  var m = challengeCardModel(); if (!m) { showToast('Your card unlocks after your Day 28 retest.'); return; }
+  closeChallengeCard();
+  var c = await drawChallengeCard(m), url = c.toDataURL('image/png');
+  var ov = document.createElement('div'); ov.id = 'challengeCardOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)';
+  ov.innerHTML = '<img id="challengeCardImg" alt="My 28 Day Challenge results" src="' + url + '" style="max-width:100%;max-height:calc(100% - 76px);object-fit:contain">'
+    + '<div style="display:flex;gap:10px;padding:12px">'
+    + '<button onclick="shareChallengeCard()" style="padding:12px 22px;background:#C9A227;border:none;border-radius:10px;color:#080806;font-family:\'Bebas Neue\',sans-serif;font-size:19px;letter-spacing:.08em;cursor:pointer">Share / Save 📤</button>'
+    + '<button onclick="closeChallengeCard()" style="padding:12px 18px;background:none;border:1px solid rgba(255,255,255,.25);border-radius:10px;color:#ddd;font-family:\'Bebas Neue\',sans-serif;font-size:19px;letter-spacing:.08em;cursor:pointer">Close</button></div>';
+  document.body.appendChild(ov);
+  ov._canvas = c;
+}
+function closeChallengeCard() { var o = document.getElementById('challengeCardOverlay'); if (o) o.remove(); }
+function shareChallengeCard() {
+  var o = document.getElementById('challengeCardOverlay'); if (!o || !o._canvas) return;
+  o._canvas.toBlob(function (b) {
+    var file = typeof File !== 'undefined' ? new File([b], 'my-28-day-challenge.png', { type: 'image/png' }) : null;
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: 'My 28 Day Challenge' }).catch(function () {});
+    } else {
+      var a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'my-28-day-challenge.png'; document.body.appendChild(a); a.click(); a.remove();
+      showToast('Saved — or take a screenshot of your card.');
+    }
+  }, 'image/png');
+}
+var CARD_BTN = '<button onclick="openChallengeCard()" style="width:100%;margin-top:12px;padding:13px;background:var(--gold);border:none;border-radius:11px;color:var(--black);font-family:\'Bebas Neue\',sans-serif;font-size:18px;letter-spacing:.08em;cursor:pointer">🏆 Get my Challenge card</button>';
 </script>
 </body>
 </html>

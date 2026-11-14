@@ -906,7 +906,7 @@ async function fillCloudPhotos(root) {
 // v=72: meter tag. Every Worker call from the Coach OS carries its version and a
 // device id (?mv=c72&md=…), so the Worker's request log shows which pushes came
 // from the automatic update (stamped) vs Update Portal, and from which device.
-var MRS_COACH_V = 'v=86';
+var MRS_COACH_V = 'v=87';
 function coachDeviceId() {
   try {
     var d = localStorage.getItem('mrs_coach_device_v1');
@@ -5130,7 +5130,7 @@ async function createShareLink(profileJson) {
   if (!res.ok) throw new Error('share link failed: ' + res.status);
   const data = await res.json();
   if (!data || !data.id) throw new Error('no id returned');
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=86';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + data.id + '&v=87';
 }
 
 // Shared builder for the portal profile blob — used by BOTH the ?p= share
@@ -5452,7 +5452,7 @@ function exportClientFile(clientId) {
       sessionNotes: c.sessionNotes||[], weeklyData: c.weeklyData||[],
       pssScores: c.pssScores||[], status: c.status||'active',
     },
-    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=86',
+    portalUrl: 'https://mrs-system.github.io/mrs-coach-os/portal.html?client=' + c.id + '&v=87',
   };
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -8436,7 +8436,7 @@ function challengeBlockStatus(b) {
   return { key:'live', label:'Day ' + d + ' of ' + CHALLENGE_DAYS, color:'var(--green-br)' };
 }
 function challengePortalUrl(blobId) {
-  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=86';
+  return 'https://mrs-system.github.io/mrs-coach-os/portal.html?p=' + blobId + '&v=87';
 }
 
 // Portal profile for a challenge participant: the standard profile plus the
@@ -8445,6 +8445,7 @@ function buildChallengePortalProfile(c) {
   var p = buildPortalProfile(c);
   var b = challengeBlockFor(c);
   p.challenge = b ? { blockId: b.id, blockName: b.name || '', startDate: b.startDate || null, days: CHALLENGE_DAYS } : null;
+  if (p.challenge && c.challengeNote) p.challenge.coachNote = String(c.challengeNote).slice(0, 160);   // v=87: your line on their share card
   if (b && b.startDate) {
     var d = b.startDate.split('-').map(Number);
     var t = pacificMidnightMs(b.startDate);   // v=82: same moment on every phone (H15)
@@ -8585,6 +8586,193 @@ async function challengeLink(clientId) {
   renderChallengeBlocks();
 }
 
+// ── v=87: the Challenge card, made and sent BY THE COACH (like the in-person report) ──
+// 28 Day Challenge → a participant's row → 🏆 Card: type your line, see their finished
+// card update as you type, then Share / Save (text or AirDrop it). The line is also
+// saved and sent to their phone, so the card they get after their retest matches.
+// The card's content + drawing below are copied WORD FOR WORD from the client app
+// (portal.html); e2e-challengecard checks both draw the identical image.
+var CARD_NEXT = 'NEXT CHALLENGE STARTS SUN JAN 3';
+var CARD_CTA = 'Sign up now · mrs-system.github.io/rebuilt';
+var CARD_FIELDS = {
+  pushups: { big: function (d) { return '+' + d + ' PUSH-UPS'; }, row: 'Push-ups', unit: '' },
+  plank:   { big: function (d) { return '+' + d + ' SEC PLANK'; }, row: 'Plank', unit: ' sec' },
+  waist:   { big: function (d) { return '−' + d + '" WAIST'; }, row: 'Waist', unit: '"' },
+  rhr:     { big: function (d) { return '−' + d + ' BPM RESTING HR'; }, row: 'Resting heart rate', unit: ' bpm' }
+};
+// Realistic limits for a 28-day change (typos, extra zeros, minutes-for-seconds, cm-for-inches).
+// Used by the card (a change outside them is never shown) and by the retest screen (asks "is that right?").
+function cardPlausible(k, a, z) {
+  if (k === 'pushups') return z >= 0 && z <= a * 3 + 15 && z >= a / 3 - 2;
+  if (k === 'plank') return z >= 5 && z <= a * 4 + 60 && z >= a / 4;
+  if (k === 'waist') return z >= 20 && z <= 70 && Math.abs(z - a) <= 4;
+  if (k === 'rhr') return z >= 35 && z <= 120 && Math.abs(z - a) <= 20;
+  return true;
+}
+// Pure: the card's content from the numbers alone. Copied WORD FOR WORD into the coach
+// app (index.html) — tests/pipes/e2e-challengecard checks the two stay identical.
+function challengeCardFrom(name, d1, d28, daysIn, totalDays, weekScores, note) {
+  if (!d28) return null;
+  var keys = { pushups: 'up', plank: 'up', waist: 'down', rhr: 'down' }, wins = [];
+  Object.keys(keys).forEach(function (k) {
+    if (!d1) return;
+    var a = parseFloat(d1[k]), z = parseFloat(d28[k]);
+    if (isNaN(a) || isNaN(z)) return;
+    var d = Math.round(Math.abs(z - a) * 10) / 10, won = keys[k] === 'up' ? z > a : z < a;
+    if (!won || !d || !cardPlausible(k, a, z)) return;        // only real improvements; weight is never read
+    wins.push({ key: k, a: a, z: z, d: d, rel: a > 0 ? d / a : d });
+  });
+  wins.sort(function (x, y) { return y.rel - x.rel; });
+  var lines = [];
+  if (daysIn >= 14) lines.push('🔥 ' + daysIn + ' of ' + totalDays + ' days checked in');
+  if (weekScores && weekScores.length) { var best = Math.max.apply(null, weekScores); if (best >= 21) lines.push('📈 Best week: ' + best + '/35'); }   // only a number to be proud of
+  return { name: String(String(name || '').trim().split(/\s+/)[0] || '').toUpperCase(), top: wins[0] || null, rest: wins.slice(1), lines: lines, note: String(note || '').trim().slice(0, 160) };
+}
+function cardWrap(ctx, text, maxW) {
+  var words = String(text).split(/\s+/), out = [], line = '';
+  words.forEach(function (w) { var t = line ? line + ' ' + w : w; if (ctx.measureText(t).width > maxW && line) { out.push(line); line = w; } else line = t; });
+  if (line) out.push(line); return out;
+}
+async function drawChallengeCard(m) {
+  try { await Promise.all(['72px "Bebas Neue"', '500 40px Barlow', '600 40px Barlow', 'italic 40px Barlow'].map(function (f) { return document.fonts.load(f); })); } catch (e) {}
+  var W = 1080, H = 1920, c = document.createElement('canvas'); c.width = W; c.height = H;
+  var x = c.getContext('2d'), gold = '#C9A227', white = '#F5F2E8', dim = '#A8A496';
+  var g = x.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#15140f'); g.addColorStop(1, '#070706');
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
+  x.strokeStyle = 'rgba(201,162,39,.55)'; x.lineWidth = 6; x.strokeRect(36, 36, W - 72, H - 72);
+  x.textAlign = 'center';
+  x.fillStyle = gold; x.font = '48px "Bebas Neue"'; x.fillText('METABOLIC REBUILD SYSTEM™', W / 2, 170);
+  x.fillStyle = white; x.font = '64px "Bebas Neue"'; x.fillText('28 DAY CHALLENGE · ✓ COMPLETE', W / 2, 250);
+  x.fillStyle = gold; x.fillRect(W / 2 - 90, 290, 180, 5);
+  // the middle: a list of pieces, each { h, draw(y) } — measured first, then centred between header and footer
+  var items = [], gap = function (h) { items.push({ h: h, draw: function () {} }); };
+  items.push({ h: 170, draw: function (y) { x.textAlign = 'center'; x.fillStyle = white; x.font = '150px "Bebas Neue"'; x.fillText(m.name || 'CHALLENGE', W / 2, y + 130); } });
+  gap(40);
+  if (m.top) {
+    var big = CARD_FIELDS[m.top.key].big(m.top.d), size = 190;
+    x.font = size + 'px "Bebas Neue"'; while (x.measureText(big).width > W - 160 && size > 90) { size -= 8; x.font = size + 'px "Bebas Neue"'; }
+    items.push({ h: size * 0.85, draw: function (y) { x.textAlign = 'center'; x.fillStyle = gold; x.font = size + 'px "Bebas Neue"'; x.fillText(big, W / 2, y + size * 0.8); } });
+    items.push({ h: 80, draw: function (y) { var u = CARD_FIELDS[m.top.key].unit; x.textAlign = 'center'; x.fillStyle = dim; x.font = '500 42px Barlow'; x.fillText(m.top.a + u + '  →  ' + m.top.z + u + '  in 28 days', W / 2, y + 60); } });
+  } else {
+    items.push({ h: 170, draw: function (y) { x.textAlign = 'center'; x.fillStyle = gold; x.font = '180px "Bebas Neue"'; x.fillText('28 DAYS. DONE.', W / 2, y + 155); } });
+    items.push({ h: 80, draw: function (y) { x.textAlign = 'center'; x.fillStyle = dim; x.font = '500 42px Barlow'; x.fillText('Started it. Finished it.', W / 2, y + 60); } });
+  }
+  if (m.rest.length) {
+    gap(30);
+    m.rest.forEach(function (w) {
+      items.push({ h: 92, draw: function (y) { var f = CARD_FIELDS[w.key], b = y + 62;
+        x.textAlign = 'left'; x.fillStyle = white; x.font = '600 46px Barlow'; x.fillText(f.row, 120, b);
+        x.textAlign = 'right'; x.font = '500 46px Barlow'; x.fillText(w.a + f.unit + ' → ' + w.z + f.unit, W - 190, b);
+        x.fillStyle = gold; x.font = '600 50px Barlow'; x.fillText('✓', W - 120, b);
+        x.fillStyle = 'rgba(255,255,255,.08)'; x.fillRect(120, y + 90, W - 240, 2); } });
+    });
+  }
+  if (m.lines.length) { gap(30); m.lines.forEach(function (l) { items.push({ h: 74, draw: function (y) { x.textAlign = 'center'; x.fillStyle = white; x.font = '500 44px Barlow'; x.fillText(l, W / 2, y + 54); } }); }); }
+  if (m.note) {
+    x.font = 'italic 46px Barlow'; var ls = cardWrap(x, '“' + m.note + '”', W - 220).slice(0, 4);
+    gap(50);
+    items.push({ h: ls.length * 62 + 70, draw: function (y) { x.textAlign = 'center'; x.fillStyle = white; x.font = 'italic 46px Barlow';
+      ls.forEach(function (l, i) { x.fillText(l, W / 2, y + 50 + i * 62); });
+      x.fillStyle = gold; x.font = '600 40px Barlow'; x.fillText('— Coach Justin', W / 2, y + 50 + ls.length * 62 + 6); } });
+  }
+  var top = 330, bottom = H - 330, total = items.reduce(function (t, i) { return t + i.h; }, 0);
+  var y = top + Math.max(0, (bottom - top - total) / 2);
+  items.forEach(function (i) { i.draw(y); y += i.h; });
+  x.textAlign = 'center';
+  x.fillStyle = 'rgba(201,162,39,.14)'; x.fillRect(39, H - 300, W - 78, 261);
+  x.fillStyle = gold; x.font = '76px "Bebas Neue"'; x.fillText(CARD_NEXT, W / 2, H - 190);
+  x.fillStyle = white; x.font = '500 38px Barlow'; x.fillText(CARD_CTA, W / 2, H - 115);
+  return c;
+}
+function coachChallengeCardModel(c, note) {
+  var st = challengeMeasures(c), b = challengeBlockFor(c), total = CHALLENGE_DAYS, days = 0, weeks = [];
+  if (b && b.startDate) {
+    var p = b.startDate.split('-').map(Number), have = {};
+    (c.weeklyData || []).forEach(function (w) { Object.keys(w.checkins || {}).forEach(function (k) {
+      var ci = w.checkins[k]; if (ci && Object.keys(ci).some(function (key) { var v = ci[key]; return key !== 'ts' && v != null && v !== false && !(Array.isArray(v) && !v.length); })) have[k] = true; }); });
+    for (var i = 0; i < total; i++) { var x = new Date(Date.UTC(p[0], p[1] - 1, p[2] + i)); if (have[x.toISOString().slice(0, 10)]) days++; }
+    var endYmd = new Date(Date.UTC(p[0], p[1] - 1, p[2] + total - 1)).toISOString().slice(0, 10);
+    (c.weeklyData || []).forEach(function (w) { var ws = String(w.weekKey || '').replace('week-', ''); if (ws >= b.startDate && ws <= endYmd && typeof w.weekScore === 'number') weeks.push(w.weekScore); });
+  }
+  return challengeCardFrom(c.name, st.challenge_selftest_day1, st.challenge_selftest_day28, days, total, weeks, note);
+}
+var _coachCard = null;
+async function openCoachChallengeCard(clientId) {
+  var c = (db().clients || []).find(function (x) { return x.id === clientId; }); if (!c) return;
+  if (!challengeMeasures(c).challenge_selftest_day28) { toast(c.name + ' hasn\u2019t done the Day 28 retest yet — the card needs it.'); return; }
+  closeCoachChallengeCard();
+  var ov = document.createElement('div'); ov.id = 'coachCardOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#000;overflow-y:auto;padding:calc(env(safe-area-inset-top,0px) + 12px) 14px calc(env(safe-area-inset-bottom,0px) + 16px)';
+  ov.innerHTML = '<div style="max-width:520px;margin:0 auto">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-family:Bebas Neue,sans-serif;font-size:22px;color:var(--gold);letter-spacing:.05em">' + esc(c.name) + '\u2019s Challenge card</div>'
+    + '<button onclick="closeCoachChallengeCard()" aria-label="Close" style="background:none;border:none;color:#bbb;font-size:28px;cursor:pointer">×</button></div>'
+    + '<label for="coachCardNote" style="font-size:12px;color:var(--dim-2)">Your words on their card (up to 160 characters) — leave empty for no quote</label>'
+    + '<textarea id="coachCardNote" maxlength="160" rows="3" style="width:100%;margin:6px 0 4px;padding:12px;border-radius:10px;border:1px solid var(--border-2);background:var(--black-4);color:var(--white);font-size:16px;line-height:1.4;resize:vertical">' + esc(c.challengeNote || '') + '</textarea>'
+    + '<div id="coachCardCount" style="font-size:11px;color:var(--dim);text-align:right;margin-bottom:10px"></div>'
+    + '<img id="coachCardImg" alt="Challenge card" style="width:100%;border-radius:10px;display:block;background:#111;aspect-ratio:9/16">'
+    + '<div style="display:flex;gap:10px;margin-top:12px">'
+    + '<button class="btn gold" style="flex:1" onclick="shareCoachChallengeCard()">Share / Save 📤</button>'
+    + '<button class="btn" onclick="closeCoachChallengeCard()">Done</button></div>'
+    + '<div style="font-size:11px;color:var(--dim);margin-top:8px;line-height:1.5">Your words are saved and sent to their phone too, so the card in their app says the same.</div>'
+    + '</div>';
+  document.body.appendChild(ov);
+  _coachCard = { id: clientId, canvas: null, t: null };
+  var ta = document.getElementById('coachCardNote');
+  ta.addEventListener('input', function () { clearTimeout(_coachCard.t); _coachCard.t = setTimeout(redrawCoachChallengeCard, 250); });
+  await redrawCoachChallengeCard();
+}
+async function redrawCoachChallengeCard() {
+  if (!_coachCard) return;
+  var c = (db().clients || []).find(function (x) { return x.id === _coachCard.id; }); if (!c) return;
+  var ta = document.getElementById('coachCardNote'), note = ta ? ta.value : '';
+  var cnt = document.getElementById('coachCardCount'); if (cnt) cnt.textContent = note.trim().length + ' / 160';
+  var cv = await drawChallengeCard(coachChallengeCardModel(c, note));
+  _coachCard.canvas = cv;
+  var img = document.getElementById('coachCardImg'); if (img) img.src = cv.toDataURL('image/png');
+}
+function saveCoachCardNote() {
+  if (!_coachCard) return;
+  var ta = document.getElementById('coachCardNote'); if (!ta) return;
+  var data = db(), c = (data.clients || []).find(function (x) { return x.id === _coachCard.id; }); if (!c) return;
+  var v = ta.value.trim().slice(0, 160);
+  if ((c.challengeNote || '') === v) return;
+  if (v) c.challengeNote = v; else delete c.challengeNote;
+  saveDb(data);
+  schedulePortalPush(c.id);
+}
+async function shareCoachChallengeCard() {
+  if (!_coachCard) return;
+  saveCoachCardNote();
+  await redrawCoachChallengeCard();
+  var c = (db().clients || []).find(function (x) { return x.id === _coachCard.id; });
+  var fname = 'challenge-card-' + String((c && c.name) || 'client').split(' ')[0].toLowerCase() + '.png';
+  _coachCard.canvas.toBlob(function (b) {
+    var file = typeof File !== 'undefined' ? new File([b], fname, { type: 'image/png' }) : null;
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) navigator.share({ files: [file] }).catch(function () {});
+    else { var a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = fname; document.body.appendChild(a); a.click(); a.remove(); toast('Card saved ✓'); }
+  }, 'image/png');
+}
+function closeCoachChallengeCard() {
+  if (_coachCard) saveCoachCardNote();
+  var o = document.getElementById('coachCardOverlay'); if (o) o.remove();
+  _coachCard = null;
+  try { renderChallengeBlocks(); } catch (e) {}
+}
+
+// v=87: one sentence from the coach, printed on the participant's "Challenge Complete"
+// share card (sent with their challenge info on the next portal update).
+function editChallengeNote(clientId) {
+  var data = db(), c = (data.clients || []).find(function (x) { return x.id === clientId; });
+  if (!c) return;
+  var v = prompt('Your line on ' + c.name + '\u2019s Challenge card (one sentence, up to 160 characters).\nLeave empty to remove it.', c.challengeNote || '');
+  if (v === null) return;
+  v = v.trim().slice(0, 160);
+  if (v) c.challengeNote = v; else delete c.challengeNote;
+  saveDb(data);
+  schedulePortalPush(clientId);
+  renderChallengeBlocks();
+}
+
 function renderChallengeBlocks() {
   var el = document.getElementById('challengeContent');
   if (!el) return;
@@ -8606,7 +8794,7 @@ function renderChallengeBlocks() {
       + '<td style="padding:8px 6px;font-size:11px;color:' + (hasProg ? 'var(--green-br)' : 'var(--red)') + '">' + (hasProg ? '✓ Program' : 'No program yet') + '</td>'
       + '<td style="padding:8px 6px;font-size:11px;color:' + (c.portalBlobId ? 'var(--green-br)' : 'var(--dim)') + '">' + (c.portalBlobId ? '✓ Linked' : 'Not linked') + '</td>'
       + '<td style="padding:8px 6px;font-size:11px;color:var(--dim-2)">' + (st.challenge_selftest_day1 ? '<span style="color:var(--green-br)">✓ Baseline</span>' : '— Baseline') + ' · ' + (st.challenge_selftest_day28 ? '<span style="color:var(--green-br)">✓ Retest</span>' : '— Retest') + '</td>'
-      + '<td class="ch-acts" style="padding:8px 6px;text-align:right;white-space:nowrap">' + (st.challenge_selftest_day28 ? '<button class="btn sm gold" onclick="printChallengeReport(\'' + esc(c.id) + '\')">Day 29 Report</button> ' : '') + '<button class="btn sm" onclick="exportClient(\'' + esc(c.id) + '\')">📲 Send link</button> ' + moveSelect(c) + ' <button class="btn sm" title="Delete participant" onclick="deleteChallengeParticipant(\'' + esc(c.id) + '\')">🗑</button></td>'
+      + '<td class="ch-acts" style="padding:8px 6px;text-align:right;white-space:nowrap">' + '<button class="btn sm" title="' + esc(c.challengeNote || 'Your line on their share card') + '" onclick="editChallengeNote(\'' + esc(c.id) + '\')">' + (c.challengeNote ? '✍️ Edit line' : '✍️ Your line') + '</button> ' + (st.challenge_selftest_day28 ? '<button class="btn sm gold" onclick="openCoachChallengeCard(\'' + esc(c.id) + '\')">🏆 Card</button> ' : '') + (st.challenge_selftest_day28 ? '<button class="btn sm gold" onclick="printChallengeReport(\'' + esc(c.id) + '\')">Day 29 Report</button> ' : '') + '<button class="btn sm" onclick="exportClient(\'' + esc(c.id) + '\')">📲 Send link</button> ' + moveSelect(c) + ' <button class="btn sm" title="Delete participant" onclick="deleteChallengeParticipant(\'' + esc(c.id) + '\')">🗑</button></td>'
       + '</tr>';
   };
   var table = function(list, emptyMsg) {
